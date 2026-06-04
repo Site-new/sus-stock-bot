@@ -212,7 +212,7 @@ def api_stock():
     change = round(price - prev, 2)
     pct = round((change / prev * 100) if prev else 0, 2)
     timestamps = data.get("price_timestamps", [])[-100:]
-    import datetime as dt, pytz
+    import datetime as dt
     cst = dt.timezone(dt.timedelta(hours=-6))
     hour = dt.datetime.now(cst).hour
     market_open = hour >= 12
@@ -626,10 +626,10 @@ DASHBOARD_HTML = """
       </div>
       <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
         <span style="font-size:11px;color:var(--muted);align-self:center;margin-right:4px">Zoom:</span>
-        <button class="zoom-btn active" onclick="setZoom(20,'5m')" data-z="5m">5m</button>
-        <button class="zoom-btn" onclick="setZoom(40,'10m')" data-z="10m">10m</button>
-        <button class="zoom-btn" onclick="setZoom(120,'30m')" data-z="30m">30m</button>
-        <button class="zoom-btn" onclick="setZoom(240,'1h')" data-z="1h">1h</button>
+        <button class="zoom-btn active" onclick="setZoom(10,'5m')" data-z="5m">5m</button>
+        <button class="zoom-btn" onclick="setZoom(20,'10m')" data-z="10m">10m</button>
+        <button class="zoom-btn" onclick="setZoom(60,'30m')" data-z="30m">30m</button>
+        <button class="zoom-btn" onclick="setZoom(120,'1h')" data-z="1h">1h</button>
         <button class="zoom-btn" onclick="setZoom(0,'all')" data-z="all">All</button>
       </div>
       <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
@@ -961,7 +961,7 @@ async function fetchLeaderboard() {
 // ── Chat ──────────────────────────────────────────────────────────────────────
 let lastMsgId = 0;
 let isLoggedIn = false;
-let zoomPoints = 20; // default 10m (20 × 30s ticks)
+let zoomPoints = 10; // default 5m (10 × 30s ticks)
 let fullHistory = [];
 let fullTimestamps = [];
 

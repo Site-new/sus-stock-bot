@@ -17,6 +17,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 ALLOWED_CHANNEL = "sus-stock"
+SUS_ONLY_CHANNEL = "sus-only"
 
 DATA_FILE = os.environ.get("DATA_FILE", "/data/data.json" if os.path.isdir("/data") else "data.json")
 STARTING_BALANCE = 1000.0
@@ -253,6 +254,28 @@ async def on_ready():
     print("Slash commands synced.")
     bot.loop.create_task(startup_messages())
     fluctuate_price.start()
+
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        await bot.process_commands(message)
+        return
+
+    if message.channel.name == SUS_ONLY_CHANNEL:
+        if message.content.strip().lower() != "sus":
+            try:
+                await message.delete()
+                await message.author.timeout(timedelta(minutes=5), reason="Only 'sus' is allowed in this channel.")
+                warn = await message.channel.send(
+                    f"🔇 {message.author.mention} only **sus** is allowed here. You've been timed out for 5 minutes.",
+                    delete_after=8,
+                )
+            except discord.Forbidden:
+                pass
+            return
+
+    await bot.process_commands(message)
 
 
 async def startup_messages():

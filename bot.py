@@ -487,6 +487,11 @@ async def fluctuate_price():
     if len(history) > 200:
         history = history[-200:]
     data["price_history"] = history
+    timestamps = data.get("price_timestamps", [])
+    timestamps.append(datetime.now().strftime("%H:%M"))
+    if len(timestamps) > 200:
+        timestamps = timestamps[-200:]
+    data["price_timestamps"] = timestamps
     save_data(data)
     await post_chart()
     await post_leaderboard()

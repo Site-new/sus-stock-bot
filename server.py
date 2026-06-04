@@ -210,7 +210,8 @@ def api_stock():
     prev = history[-2] if len(history) >= 2 else price
     change = round(price - prev, 2)
     pct = round((change / prev * 100) if prev else 0, 2)
-    return jsonify({"price": price, "change": change, "change_pct": pct, "history": history[-100:]})
+    timestamps = data.get("price_timestamps", [])[-100:]
+    return jsonify({"price": price, "change": change, "change_pct": pct, "history": history[-100:], "timestamps": timestamps})
 
 
 @app.route("/api/leaderboard")
@@ -441,8 +442,15 @@ DASHBOARD_HTML = """
     <div class="card">
       <div class="card-title">📊 My Portfolio</div>
       <div id="portfolio-area">
-        <div class="login-prompt">
-          <a href="/login">Login with Discord</a> to view your portfolio and trade.
+        <div style="text-align:center;padding:20px 8px">
+          <div style="font-size:36px;margin-bottom:10px">📈</div>
+          <div style="font-size:16px;font-weight:700;margin-bottom:6px">Start Trading SUS Stock</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:18px">Login with your Discord account to view your portfolio, track your net worth, and buy & sell in real time.</div>
+          <a href="/login" style="display:inline-flex;align-items:center;gap:10px;background:#5865f2;color:#fff;font-weight:700;font-size:15px;padding:12px 24px;border-radius:10px;text-decoration:none;transition:background 0.2s" onmouseover="this.style.background='#4752c4'" onmouseout="this.style.background='#5865f2'">
+            <svg width="20" height="15" viewBox="0 0 71 55" fill="white"><path d="M60.1 4.9A58.6 58.6 0 0 0 45.6.4a.2.2 0 0 0-.2.1 40.8 40.8 0 0 0-1.8 3.7 54.1 54.1 0 0 0-16.2 0 37.6 37.6 0 0 0-1.8-3.7.22.22 0 0 0-.2-.1A58.4 58.4 0 0 0 10.9 4.9a.2.2 0 0 0-.1.1C1.6 18.1-.9 31 .3 43.7a.24.24 0 0 0 .1.2 58.9 58.9 0 0 0 17.7 8.9.22.22 0 0 0 .2-.1 42 42 0 0 0 3.6-5.9.21.21 0 0 0-.1-.3 38.7 38.7 0 0 1-5.5-2.6.22.22 0 0 1 0-.4c.4-.3.7-.5 1.1-.8a.21.21 0 0 1 .2 0c11.5 5.3 24 5.3 35.4 0a.21.21 0 0 1 .2 0l1.1.8a.22.22 0 0 1 0 .4 36.3 36.3 0 0 1-5.5 2.6.22.22 0 0 0-.1.3 47.1 47.1 0 0 0 3.6 5.9.21.21 0 0 0 .2.1 58.7 58.7 0 0 0 17.7-8.9.23.23 0 0 0 .1-.2c1.5-15.1-2.4-28-10.4-39.5a.18.18 0 0 0-.1-.2zM23.7 36c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2zm23.6 0c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2z"/></svg>
+            Login with Discord
+          </a>
+          <div style="font-size:11px;color:var(--muted);margin-top:12px">Everyone starts with $1,000 — no cost to play</div>
         </div>
       </div>
     </div>
@@ -477,14 +485,31 @@ const chart = new Chart(ctx, {
   data: { labels: [], datasets: [{ data: [], borderColor: '#57f287', backgroundColor: 'rgba(87,242,135,0.08)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 }] },
   options: {
     responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
-    plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => fmt(c.parsed.y) } } },
-    scales: { x: { display: false }, y: { grid: { color: '#3a3c40' }, ticks: { color: '#949ba4', callback: v => fmt(v) }, border: { display: false } } }
+    plugins: { legend: { display: false }, tooltip: { callbacks: {
+      label: c => fmt(c.parsed.y),
+      title: items => items[0].label || ''
+    }}},
+    scales: {
+      x: {
+        display: true,
+        ticks: {
+          color: '#949ba4',
+          maxTicksLimit: 6,
+          maxRotation: 0,
+          autoSkip: true,
+          font: { size: 10 }
+        },
+        grid: { display: false },
+        border: { display: false }
+      },
+      y: { grid: { color: '#3a3c40' }, ticks: { color: '#949ba4', callback: v => fmt(v) }, border: { display: false } }
+    }
   }
 });
 
 async function fetchStock() {
   const d = await fetch('/api/stock').then(r => r.json());
-  const { price, change, change_pct: pct, history } = d;
+  const { price, change, change_pct: pct, history, timestamps } = d;
   const up = change >= 0;
   document.getElementById('price').textContent = fmt(price);
   const badge = document.getElementById('change-badge');
@@ -492,7 +517,7 @@ async function fetchStock() {
   badge.className = 'change-badge ' + (up ? 'up' : 'down');
   chart.data.datasets[0].borderColor = up ? '#57f287' : '#ed4245';
   chart.data.datasets[0].backgroundColor = up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)';
-  chart.data.labels = history.map((_,i) => i);
+  chart.data.labels = timestamps && timestamps.length ? timestamps : history.map((_,i) => i);
   chart.data.datasets[0].data = history;
   chart.update();
   document.getElementById('range-marker').style.left = ((price - 5) / 495 * 100) + '%';

@@ -272,6 +272,7 @@ async def on_ready():
     print("Slash commands synced.")
     bot.loop.create_task(startup_messages())
     fluctuate_price.start()
+    update_price_target.start()
 
 
 @bot.event
@@ -535,13 +536,30 @@ async def post_portfolio():
         print(f"Portfolio post error: {e}")
 
 
+@tasks.loop(hours=1)
+async def update_price_target():
+    """Pick a new random target every hour for the price to drift toward."""
+    data = load_data()
+    new_target = round(random.uniform(MIN_PRICE, MAX_PRICE), 2)
+    data["price_target"] = new_target
+    save_data(data)
+    print(f"[price_target] New hourly target: ${new_target}")
+
+
+@update_price_target.before_loop
+async def before_target():
+    await bot.wait_until_ready()
+
+
 @tasks.loop(seconds=30)
 async def fluctuate_price():
     try:
         data = load_data()
         price = data["stock_price"]
+        target = data.get("price_target", random.uniform(MIN_PRICE, MAX_PRICE))
         change_pct = random.uniform(-0.06, 0.06)
-        reversion = (BASE_PRICE - price) * 0.02
+        # Stronger pull toward the hourly target instead of always reverting to 50
+        reversion = (target - price) * 0.04
         new_price = round(max(MIN_PRICE, min(MAX_PRICE, price * (1 + change_pct) + reversion)), 2)
         if new_price == price:
             return

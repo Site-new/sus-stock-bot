@@ -1,10 +1,22 @@
 import json
 import os
-from flask import Flask, jsonify, render_template_string
+import secrets
+import requests
+from flask import Flask, jsonify, render_template_string, redirect, request, session, url_for
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
+
 DATA_FILE = "data.json"
 STARTING_BALANCE = 1000.0
+
+DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET")
+DISCORD_REDIRECT_URI  = os.environ.get("DISCORD_REDIRECT_URI", "http://localhost:5000/callback")
+
+DISCORD_AUTH_URL  = "https://discord.com/oauth2/authorize"
+DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
+DISCORD_USER_URL  = "https://discord.com/api/users/@me"
 
 
 def load_data():
@@ -14,6 +26,81 @@ def load_data():
         return json.load(f)
 
 
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def get_user(data, user_id):
+    uid = str(user_id)
+    if uid not in data["users"]:
+        data["users"][uid] = {"balance": STARTING_BALANCE, "shares": 0}
+    return data["users"][uid]
+
+
+def fmt(amount):
+    return f"${amount:,.2f}"
+
+
+# ── Auth routes ────────────────────────────────────────────────────────────────
+
+@app.route("/login")
+def login():
+    state = secrets.token_hex(16)
+    session["oauth_state"] = state
+    params = {
+        "client_id": DISCORD_CLIENT_ID,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "identify",
+        "state": state,
+    }
+    url = DISCORD_AUTH_URL + "?" + "&".join(f"{k}={v}" for k, v in params.items())
+    return redirect(url)
+
+
+@app.route("/callback")
+def callback():
+    if request.args.get("state") != session.pop("oauth_state", None):
+        return "Invalid state", 400
+
+    code = request.args.get("code")
+    token_res = requests.post(DISCORD_TOKEN_URL, data={
+        "client_id": DISCORD_CLIENT_ID,
+        "client_secret": DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": DISCORD_REDIRECT_URI,
+    }, headers={"Content-Type": "application/x-www-form-urlencoded"})
+
+    token_data = token_res.json()
+    access_token = token_data.get("access_token")
+    if not access_token:
+        return "Auth failed", 400
+
+    user_res = requests.get(DISCORD_USER_URL, headers={"Authorization": f"Bearer {access_token}"})
+    user_data = user_res.json()
+
+    session["user_id"] = user_data["id"]
+    session["username"] = user_data.get("username", "Unknown")
+    session["avatar"] = user_data.get("avatar")
+
+    # Register user in data.json if first time
+    data = load_data()
+    get_user(data, user_data["id"])
+    save_data(data)
+
+    return redirect("/")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
+
+# ── API routes ─────────────────────────────────────────────────────────────────
+
 @app.route("/api/stock")
 def api_stock():
     data = load_data()
@@ -22,12 +109,7 @@ def api_stock():
     prev = history[-2] if len(history) >= 2 else price
     change = round(price - prev, 2)
     pct = round((change / prev * 100) if prev else 0, 2)
-    return jsonify({
-        "price": price,
-        "change": change,
-        "change_pct": pct,
-        "history": history[-100:],
-    })
+    return jsonify({"price": price, "change": change, "change_pct": pct, "history": history[-100:]})
 
 
 @app.route("/api/leaderboard")
@@ -38,18 +120,75 @@ def api_leaderboard():
     for uid, u in data["users"].items():
         invested = round(u["shares"] * price, 2)
         net_worth = round(u["balance"] + invested, 2)
-        pnl = round(net_worth - STARTING_BALANCE, 2)
-        users.append({
-            "id": uid,
-            "shares": u["shares"],
-            "cash": u["balance"],
-            "invested": invested,
-            "net_worth": net_worth,
-            "pnl": pnl,
-        })
+        users.append({"id": uid, "shares": u["shares"], "cash": u["balance"],
+                      "invested": invested, "net_worth": net_worth,
+                      "pnl": round(net_worth - STARTING_BALANCE, 2)})
     users.sort(key=lambda x: x["net_worth"], reverse=True)
     return jsonify(users)
 
+
+@app.route("/api/me")
+def api_me():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    save_data(data)
+    price = data["stock_price"]
+    invested = round(u["shares"] * price, 2)
+    net_worth = round(u["balance"] + invested, 2)
+    return jsonify({
+        "username": session["username"],
+        "avatar": session.get("avatar"),
+        "user_id": session["user_id"],
+        "shares": u["shares"],
+        "cash": u["balance"],
+        "invested": invested,
+        "net_worth": net_worth,
+        "pnl": round(net_worth - STARTING_BALANCE, 2),
+        "price": price,
+    })
+
+
+@app.route("/api/buy", methods=["POST"])
+def api_buy():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    shares = int(request.json.get("shares", 0))
+    if shares <= 0:
+        return jsonify({"error": "invalid amount"}), 400
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    price = data["stock_price"]
+    cost = round(price * shares, 2)
+    if u["balance"] < cost:
+        return jsonify({"error": f"Not enough cash. Need {fmt(cost)}, have {fmt(u['balance'])}"}), 400
+    u["balance"] = round(u["balance"] - cost, 2)
+    u["shares"] += shares
+    save_data(data)
+    return jsonify({"ok": True, "bought": shares, "cost": cost, "balance": u["balance"], "shares": u["shares"]})
+
+
+@app.route("/api/sell", methods=["POST"])
+def api_sell():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    shares = int(request.json.get("shares", 0))
+    if shares <= 0:
+        return jsonify({"error": "invalid amount"}), 400
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    price = data["stock_price"]
+    if u["shares"] < shares:
+        return jsonify({"error": f"You only have {u['shares']} shares"}), 400
+    earnings = round(price * shares, 2)
+    u["shares"] -= shares
+    u["balance"] = round(u["balance"] + earnings, 2)
+    save_data(data)
+    return jsonify({"ok": True, "sold": shares, "earnings": earnings, "balance": u["balance"], "shares": u["shares"]})
+
+
+# ── Dashboard ──────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
@@ -66,69 +205,103 @@ DASHBOARD_HTML = """
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   :root {
-    --bg: #1e1f22;
-    --surface: #2b2d31;
-    --surface2: #313338;
-    --accent: #5865f2;
-    --green: #57f287;
-    --red: #ed4245;
-    --text: #dbdee1;
-    --muted: #949ba4;
-    --border: #3a3c40;
+    --bg: #1e1f22; --surface: #2b2d31; --surface2: #313338;
+    --accent: #5865f2; --green: #57f287; --red: #ed4245;
+    --text: #dbdee1; --muted: #949ba4; --border: #3a3c40;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; min-height: 100vh; }
-  header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 16px 32px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-  header h1 { font-size: 22px; font-weight: 700; }
-  .tag { background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
-  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.5s infinite; margin-left: auto; }
+
+  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 20px; font-weight: 700; }
+  .tag { background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-  .layout { display: grid; grid-template-columns: 1fr 340px; gap: 20px; padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
+
+  .auth-area { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .btn { padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; border: none; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  .btn-discord { background: #5865f2; color: #fff; }
+  .btn-discord:hover { background: #4752c4; }
+  .btn-logout { background: var(--surface2); color: var(--muted); font-size: 12px; padding: 5px 12px; }
+  .btn-logout:hover { color: var(--text); }
+  .btn-buy { background: #57f28722; color: var(--green); border: 1px solid #57f28740; }
+  .btn-buy:hover { background: #57f28740; }
+  .btn-sell { background: #ed424522; color: var(--red); border: 1px solid #ed424540; }
+  .btn-sell:hover { background: #ed424540; }
+  .avatar { width: 30px; height: 30px; border-radius: 50%; }
+
+  .layout { display: grid; grid-template-columns: 1fr 340px; gap: 20px; padding: 20px 28px; max-width: 1400px; margin: 0 auto; }
   @media(max-width:900px){ .layout{ grid-template-columns:1fr; } }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; }
-  .card-title { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
-  .price-hero { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
-  .price-hero .price { font-size: 42px; font-weight: 800; letter-spacing: -1px; }
-  .change-badge { font-size: 14px; font-weight: 700; padding: 4px 10px; border-radius: 6px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin-bottom: 16px; }
+  .card-title { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+
+  .price-hero { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .price { font-size: 40px; font-weight: 800; letter-spacing: -1px; }
+  .change-badge { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 6px; }
   .change-badge.up { background: #57f28722; color: var(--green); }
   .change-badge.down { background: #ed424522; color: var(--red); }
-  .price-sub { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
-  .chart-wrap { position: relative; height: 260px; }
-  .range-bar-wrap { margin-top: 14px; }
+  .chart-wrap { position: relative; height: 240px; }
+
+  .range-bar-wrap { margin-top: 12px; }
   .range-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
   .range-bar { height: 6px; border-radius: 3px; background: var(--border); position: relative; }
   .range-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--red), var(--green)); }
   .range-marker { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); }
-  .lb-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+  .stat { background: var(--surface2); border-radius: 8px; padding: 10px 12px; }
+  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; }
+  .stat-value { font-size: 16px; font-weight: 700; }
+
+  /* Portfolio card */
+  .portfolio-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+  .p-stat { background: var(--surface2); border-radius: 8px; padding: 10px 12px; }
+  .p-stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; }
+  .p-stat-value { font-size: 15px; font-weight: 700; }
+  .trade-row { display: flex; gap: 8px; margin-top: 4px; }
+  .trade-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 12px; font-size: 14px; width: 100%; outline: none; }
+  .trade-input:focus { border-color: var(--accent); }
+  .trade-btns { display: flex; gap: 8px; margin-top: 8px; }
+
+  .login-prompt { text-align: center; padding: 24px 0; color: var(--muted); font-size: 14px; }
+  .login-prompt a { color: var(--accent); text-decoration: none; font-weight: 600; }
+
+  /* Leaderboard */
+  .lb-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
   .lb-row:last-child { border-bottom: none; }
-  .lb-rank { font-size: 18px; width: 28px; text-align: center; flex-shrink: 0; }
-  .lb-name { font-weight: 600; font-size: 14px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .lb-worth { font-weight: 700; font-size: 14px; color: var(--green); flex-shrink: 0; }
-  .lb-pnl { font-size: 11px; color: var(--muted); }
+  .lb-rank { font-size: 16px; width: 26px; text-align: center; flex-shrink: 0; }
+  .lb-name { font-weight: 600; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lb-worth { font-weight: 700; font-size: 13px; color: var(--green); flex-shrink: 0; }
+  .lb-pnl { font-size: 11px; }
   .lb-pnl.pos { color: var(--green); }
   .lb-pnl.neg { color: var(--red); }
-  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
-  .stat { background: var(--surface2); border-radius: 8px; padding: 12px 14px; }
-  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
-  .stat-value { font-size: 18px; font-weight: 700; }
-  .updated { font-size: 11px; color: var(--muted); margin-top: 10px; }
+  .lb-me { background: #5865f215; border-radius: 6px; padding: 0 6px; }
+
+  .updated { font-size: 11px; color: var(--muted); margin-top: 8px; }
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 99; }
+  .toast.show { opacity: 1; }
+  .toast.ok { border-color: var(--green); color: var(--green); }
+  .toast.err { border-color: var(--red); color: var(--red); }
 </style>
 </head>
 <body>
+
 <header>
-  <span style="font-size:24px">📈</span>
+  <span style="font-size:22px">📈</span>
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
+  <div class="auth-area" id="auth-area">
+    <a href="/login" class="btn btn-discord">
+      <svg width="16" height="12" viewBox="0 0 71 55" fill="white"><path d="M60.1 4.9A58.6 58.6 0 0 0 45.6.4a.2.2 0 0 0-.2.1 40.8 40.8 0 0 0-1.8 3.7 54.1 54.1 0 0 0-16.2 0 37.6 37.6 0 0 0-1.8-3.7.22.22 0 0 0-.2-.1A58.4 58.4 0 0 0 10.9 4.9a.2.2 0 0 0-.1.1C1.6 18.1-.9 31 .3 43.7a.24.24 0 0 0 .1.2 58.9 58.9 0 0 0 17.7 8.9.22.22 0 0 0 .2-.1 42 42 0 0 0 3.6-5.9.21.21 0 0 0-.1-.3 38.7 38.7 0 0 1-5.5-2.6.22.22 0 0 1 0-.4c.4-.3.7-.5 1.1-.8a.21.21 0 0 1 .2 0c11.5 5.3 24 5.3 35.4 0a.21.21 0 0 1 .2 0l1.1.8a.22.22 0 0 1 0 .4 36.3 36.3 0 0 1-5.5 2.6.22.22 0 0 0-.1.3 47.1 47.1 0 0 0 3.6 5.9.21.21 0 0 0 .2.1 58.7 58.7 0 0 0 17.7-8.9.23.23 0 0 0 .1-.2c1.5-15.1-2.4-28-10.4-39.5a.18.18 0 0 0-.1-.2zM23.7 36c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2zm23.6 0c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2z"/></svg>
+      Login with Discord
+    </a>
+  </div>
 </header>
+
 <div class="layout">
+  <!-- Left column -->
   <div>
     <div class="card">
       <div class="card-title">SUS / USD</div>
@@ -136,7 +309,6 @@ DASHBOARD_HTML = """
         <span class="price" id="price">—</span>
         <span class="change-badge" id="change-badge">—</span>
       </div>
-      <div class="price-sub">Sus Stock · updates every 30s</div>
       <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
       <div class="range-bar-wrap">
         <div class="range-labels"><span>Min $5.00</span><span id="range-label">—</span><span>Max $500.00</span></div>
@@ -154,7 +326,20 @@ DASHBOARD_HTML = """
       <div class="updated" id="updated">—</div>
     </div>
   </div>
+
+  <!-- Right column -->
   <div>
+    <!-- Portfolio -->
+    <div class="card">
+      <div class="card-title">📊 My Portfolio</div>
+      <div id="portfolio-area">
+        <div class="login-prompt">
+          <a href="/login">Login with Discord</a> to view your portfolio and trade.
+        </div>
+      </div>
+    </div>
+
+    <!-- Leaderboard -->
     <div class="card">
       <div class="card-title">🏆 Leaderboard</div>
       <div id="leaderboard">Loading...</div>
@@ -162,9 +347,22 @@ DASHBOARD_HTML = """
     </div>
   </div>
 </div>
+
+<div class="toast" id="toast"></div>
+
 <script>
 const fmt = v => '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
 const medals = ['🥇','🥈','🥉'];
+let myUserId = null;
+
+function showToast(msg, ok=true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+// Chart
 const ctx = document.getElementById('priceChart').getContext('2d');
 const chart = new Chart(ctx, {
   type: 'line',
@@ -175,51 +373,103 @@ const chart = new Chart(ctx, {
     scales: { x: { display: false }, y: { grid: { color: '#3a3c40' }, ticks: { color: '#949ba4', callback: v => fmt(v) }, border: { display: false } } }
   }
 });
+
 async function fetchStock() {
-  try {
-    const d = await fetch('/api/stock').then(r => r.json());
-    const { price, change, change_pct: pct, history } = d;
-    const up = change >= 0;
-    document.getElementById('price').textContent = fmt(price);
-    const badge = document.getElementById('change-badge');
-    badge.textContent = `${up?'+':''}${fmt(change)} (${up?'+':''}${pct}%)`;
-    badge.className = 'change-badge ' + (up ? 'up' : 'down');
-    chart.data.datasets[0].borderColor = up ? '#57f287' : '#ed4245';
-    chart.data.datasets[0].backgroundColor = up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)';
-    chart.data.labels = history.map((_,i) => i);
-    chart.data.datasets[0].data = history;
-    chart.update();
-    document.getElementById('range-marker').style.left = ((price - 5) / 495 * 100) + '%';
-    document.getElementById('range-label').textContent = fmt(price);
-    const low = Math.min(...history), high = Math.max(...history), first = history[0], tc = price - first;
-    document.getElementById('stat-low').textContent = fmt(low);
-    document.getElementById('stat-high').textContent = fmt(high);
-    const sc = document.getElementById('stat-change');
-    sc.textContent = `${tc>=0?'+':''}${fmt(tc)}`;
-    sc.style.color = tc >= 0 ? 'var(--green)' : 'var(--red)';
-    document.getElementById('stat-points').textContent = history.length;
-    document.getElementById('updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
-  } catch(e) { console.error(e); }
+  const d = await fetch('/api/stock').then(r => r.json());
+  const { price, change, change_pct: pct, history } = d;
+  const up = change >= 0;
+  document.getElementById('price').textContent = fmt(price);
+  const badge = document.getElementById('change-badge');
+  badge.textContent = `${up?'+':''}${fmt(change)} (${up?'+':''}${pct}%)`;
+  badge.className = 'change-badge ' + (up ? 'up' : 'down');
+  chart.data.datasets[0].borderColor = up ? '#57f287' : '#ed4245';
+  chart.data.datasets[0].backgroundColor = up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)';
+  chart.data.labels = history.map((_,i) => i);
+  chart.data.datasets[0].data = history;
+  chart.update();
+  document.getElementById('range-marker').style.left = ((price - 5) / 495 * 100) + '%';
+  document.getElementById('range-label').textContent = fmt(price);
+  const low = Math.min(...history), high = Math.max(...history), tc = price - history[0];
+  document.getElementById('stat-low').textContent = fmt(low);
+  document.getElementById('stat-high').textContent = fmt(high);
+  const sc = document.getElementById('stat-change');
+  sc.textContent = `${tc>=0?'+':''}${fmt(tc)}`;
+  sc.style.color = tc >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('stat-points').textContent = history.length;
+  document.getElementById('updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
 }
+
+async function fetchMe() {
+  const res = await fetch('/api/me');
+  if (!res.ok) return;
+  const u = await res.json();
+  myUserId = u.user_id;
+
+  // Update header
+  const authArea = document.getElementById('auth-area');
+  const avatarUrl = u.avatar
+    ? `https://cdn.discordapp.com/avatars/${u.user_id}/${u.avatar}.png?size=64`
+    : `https://cdn.discordapp.com/embed/avatars/0.png`;
+  authArea.innerHTML = `
+    <img src="${avatarUrl}" class="avatar" alt="avatar"/>
+    <span style="font-weight:600;font-size:13px">${u.username}</span>
+    <a href="/logout" class="btn btn-logout">Logout</a>`;
+
+  // Portfolio
+  const pnlColor = u.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('portfolio-area').innerHTML = `
+    <div class="portfolio-grid">
+      <div class="p-stat"><div class="p-stat-label">Net Worth</div><div class="p-stat-value">${fmt(u.net_worth)}</div></div>
+      <div class="p-stat"><div class="p-stat-label">P&L</div><div class="p-stat-value" style="color:${pnlColor}">${u.pnl>=0?'+':''}${fmt(u.pnl)}</div></div>
+      <div class="p-stat"><div class="p-stat-label">SUS Shares</div><div class="p-stat-value" id="my-shares">${u.shares}</div></div>
+      <div class="p-stat"><div class="p-stat-label">Cash</div><div class="p-stat-value" id="my-cash">${fmt(u.cash)}</div></div>
+      <div class="p-stat" style="grid-column:span 2"><div class="p-stat-label">Invested Value</div><div class="p-stat-value" id="my-invested">${fmt(u.invested)}</div></div>
+    </div>
+    <input type="number" id="trade-amount" class="trade-input" placeholder="Number of shares..." min="1"/>
+    <div class="trade-btns">
+      <button class="btn btn-buy" style="flex:1" onclick="trade('buy')">📈 Buy</button>
+      <button class="btn btn-sell" style="flex:1" onclick="trade('sell')">📉 Sell</button>
+    </div>`;
+}
+
+async function trade(action) {
+  const shares = parseInt(document.getElementById('trade-amount').value);
+  if (!shares || shares < 1) { showToast('Enter a valid number of shares', false); return; }
+  const res = await fetch('/api/' + action, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ shares })
+  });
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error, false); return; }
+  if (action === 'buy') {
+    showToast(`Bought ${data.bought} shares for ${fmt(data.cost)}`);
+  } else {
+    showToast(`Sold ${data.sold} shares for ${fmt(data.earnings)}`);
+  }
+  document.getElementById('trade-amount').value = '';
+  fetchMe();
+}
+
 async function fetchLeaderboard() {
-  try {
-    const users = await fetch('/api/leaderboard').then(r => r.json());
-    const el = document.getElementById('leaderboard');
-    if (!users.length) { el.textContent = 'No traders yet.'; return; }
-    el.innerHTML = users.slice(0,10).map((u,i) => `
-      <div class="lb-row">
-        <div class="lb-rank">${medals[i] || '#'+(i+1)}</div>
-        <div>
-          <div class="lb-name">User #${u.id.slice(-4)}</div>
-          <div class="lb-pnl ${u.pnl>=0?'pos':'neg'}">${u.pnl>=0?'+':''}${fmt(u.pnl)} P&L · ${u.shares} shares</div>
-        </div>
-        <div class="lb-worth">${fmt(u.net_worth)}</div>
-      </div>`).join('');
-    document.getElementById('lb-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
-  } catch(e) { console.error(e); }
+  const users = await fetch('/api/leaderboard').then(r => r.json());
+  const el = document.getElementById('leaderboard');
+  if (!users.length) { el.textContent = 'No traders yet.'; return; }
+  el.innerHTML = users.slice(0,10).map((u,i) => `
+    <div class="lb-row ${u.id === myUserId ? 'lb-me' : ''}">
+      <div class="lb-rank">${medals[i] || '#'+(i+1)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="lb-name">${u.id === myUserId ? '⭐ You' : 'Trader #'+u.id.slice(-4)}</div>
+        <div class="lb-pnl ${u.pnl>=0?'pos':'neg'}">${u.pnl>=0?'+':''}${fmt(u.pnl)} · ${u.shares} shares</div>
+      </div>
+      <div class="lb-worth">${fmt(u.net_worth)}</div>
+    </div>`).join('');
+  document.getElementById('lb-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 }
-fetchStock(); fetchLeaderboard();
+
+fetchStock(); fetchMe(); fetchLeaderboard();
 setInterval(fetchStock, 10000);
+setInterval(fetchMe, 15000);
 setInterval(fetchLeaderboard, 15000);
 </script>
 </body>

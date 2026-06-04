@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime, timedelta, timezone
 from headlines import get_headline
+from companies import (load_companies, save_companies, company_stock_price,
+                       company_value, COMPANY_TYPES)
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -295,6 +297,7 @@ async def on_ready():
     pay_dividends.start()
     update_bull_bear.start()
     insider_tip.start()
+    process_companies.start()
 
 
 @bot.event
@@ -682,6 +685,144 @@ async def update_price_target():
 
 @update_price_target.before_loop
 async def before_target():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(minutes=20)
+async def process_companies():
+    """Run all company-type-specific mechanics every 20 minutes."""
+    try:
+        data = load_data()
+        sus_price = data["stock_price"]
+        companies = load_companies()
+        changed = False
+
+        for cid, c in companies.items():
+            ctype = c.get("type")
+            members = c.get("members", {})
+
+            # ── Index Fund: auto-buy SUS with idle cash ──────────────────────
+            if ctype == "index_fund" and c["treasury"] >= sus_price:
+                shares_to_buy = int(c["treasury"] // sus_price)
+                if shares_to_buy > 0:
+                    cost = round(shares_to_buy * sus_price, 2)
+                    c["treasury"] = round(c["treasury"] - cost, 2)
+                    c["sus_shares"] = c.get("sus_shares", 0) + shares_to_buy
+                    changed = True
+
+            # ── Savings Account: pay 3% interest on deposits ─────────────────
+            if ctype == "savings":
+                for uid, dep_amount in c.get("deposits", {}).items():
+                    if dep_amount > 0 and uid in data.get("users", {}):
+                        interest = round(dep_amount * 0.03, 2)
+                        c["treasury"] = round(c["treasury"] - interest, 2)
+                        data["users"][uid]["balance"] = round(data["users"][uid]["balance"] + interest, 2)
+                changed = True
+
+            # ── Lending Bank: collect interest on loans ───────────────────────
+            if ctype == "lending_bank":
+                for uid, loan in list(c.get("loans", {}).items()):
+                    interest = round(loan["amount"] * loan["rate"], 2)
+                    if uid in data.get("users", {}):
+                        u = data["users"][uid]
+                        if u["balance"] >= interest:
+                            u["balance"] = round(u["balance"] - interest, 2)
+                            c["treasury"] = round(c["treasury"] + interest, 2)
+                        else:
+                            # Can't pay, increase debt
+                            c["loans"][uid]["due"] = round(loan["due"] * 1.1, 2)
+                    changed = True
+
+            # ── Insurance: check policies and pay out if needed ───────────────
+            if ctype == "insurance":
+                for uid, policy in list(c.get("policies", {}).items()):
+                    if uid not in data.get("users", {}):
+                        continue
+                    u = data["users"][uid]
+                    current_nw = u["balance"] + u.get("shares", 0) * sus_price
+                    snap = policy.get("snapshot", current_nw)
+                    drop_pct = (snap - current_nw) / snap if snap > 0 else 0
+                    if drop_pct >= 0.20:  # 20% drop triggers payout
+                        payout = min(policy["coverage"], c["treasury"])
+                        c["treasury"] = round(c["treasury"] - payout, 2)
+                        u["balance"] = round(u["balance"] + payout, 2)
+                        del c["policies"][uid]
+                        print(f"[insurance] Paid {payout} to {uid}")
+                    changed = True
+
+            # ── Day Trading LLC: execute majority vote ────────────────────────
+            if ctype == "day_trading" and c.get("vote"):
+                vote = c["vote"]
+                if time.time() > vote.get("expires", 0):
+                    buy_v = len(vote.get("buy", []))
+                    sell_v = len(vote.get("sell", []))
+                    total = buy_v + sell_v + len(vote.get("hold", []))
+                    if total > 0 and c["treasury"] >= sus_price:
+                        if buy_v > sell_v:
+                            shares = int(c["treasury"] * 0.5 // sus_price)
+                            if shares > 0:
+                                c["treasury"] = round(c["treasury"] - shares * sus_price, 2)
+                                c["sus_shares"] = c.get("sus_shares", 0) + shares
+                        elif sell_v > buy_v and c.get("sus_shares", 0) > 0:
+                            c["treasury"] = round(c["treasury"] + c["sus_shares"] * sus_price, 2)
+                            c["sus_shares"] = 0
+                    c["vote"] = {"buy": [], "sell": [], "hold": [], "expires": int(time.time()) + 3600}
+                    changed = True
+
+            # ── Wolf Pack: if vote majority buy, amplify price ────────────────
+            if ctype == "wolf_pack" and c.get("vote"):
+                vote = c["vote"]
+                if time.time() > vote.get("expires", 0) and len(vote.get("buy", [])) > len(members) // 2:
+                    # Amplify price 3× on next tick by modifying target
+                    boost = round(sus_price * 3, 2)
+                    data["price_target"] = min(MAX_PRICE, boost)
+                    c["vote"] = {"buy": [], "sell": [], "hold": [], "expires": int(time.time()) + 3600}
+                    changed = True
+
+            # ── Pump & Dump: CEO can trigger dump when vote majority ───────────
+            if ctype == "pump_dump" and c.get("vote"):
+                vote = c["vote"]
+                if time.time() > vote.get("expires", 0):
+                    buy_v = len(vote.get("buy", []))
+                    sell_v = len(vote.get("sell", []))
+                    if buy_v > len(members) // 2:
+                        data["price_target"] = min(MAX_PRICE, sus_price * 2)
+                    elif sell_v > len(members) // 2 and c.get("sus_shares", 0) > 0:
+                        c["treasury"] = round(c["treasury"] + c["sus_shares"] * sus_price, 2)
+                        c["sus_shares"] = 0
+                    c["vote"] = {"buy": [], "sell": [], "hold": [], "expires": int(time.time()) + 3600}
+                    changed = True
+
+            # ── Bounty Hunter: check if targets dropped ───────────────────────
+            if ctype == "bounty_hunter":
+                for bounty in list(c.get("bounties", [])):
+                    target_uid = bounty["target"]
+                    if target_uid in data.get("users", {}):
+                        target_nw = data["users"][target_uid]["balance"] + data["users"][target_uid].get("shares", 0) * sus_price
+                        if target_nw < bounty["amount"] * 0.7 or time.time() > bounty["expires"]:
+                            # Payout 70% to poster, company keeps 30%
+                            poster = bounty.get("poster")
+                            if poster and poster in data.get("users", {}) and target_nw < bounty["amount"] * 0.7:
+                                data["users"][poster]["balance"] = round(data["users"][poster]["balance"] + bounty["amount"] * 0.7, 2)
+                            c["bounties"].remove(bounty)
+                            changed = True
+
+            # Update company stock price history
+            new_price = company_stock_price(c, sus_price)
+            c["stock_price"] = new_price
+            c.setdefault("stock_history", []).append(new_price)
+            if len(c["stock_history"]) > 100:
+                c["stock_history"] = c["stock_history"][-100:]
+
+        if changed:
+            save_data(data)
+        save_companies(companies)
+    except Exception as e:
+        print(f"[companies] error: {e}")
+
+
+@process_companies.before_loop
+async def before_companies():
     await bot.wait_until_ready()
 
 

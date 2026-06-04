@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import secrets
 import requests
 from flask import Flask, jsonify, render_template_string, redirect, request, session, url_for
@@ -475,11 +476,471 @@ def api_chat_send():
     return jsonify({"ok": True, "message": msg})
 
 
+# ── Companies ─────────────────────────────────────────────────────────────────
+
+from companies import (load_companies, save_companies, company_value,
+                       company_stock_price, create_company, is_ceo,
+                       get_member, COMPANY_TYPES, COMPANY_COST, SHARES_ISSUED)
+
+
+def enrich_company(c, sus_price):
+    """Add computed fields for API responses."""
+    price = company_stock_price(c, sus_price)
+    val = company_value(c, sus_price)
+    c["_stock_price"] = price
+    c["_value"] = val
+    return c
+
+
+@app.route("/api/companies")
+def api_companies():
+    data = load_data()
+    sus_price = data["stock_price"]
+    companies = load_companies()
+    result = []
+    for c in companies.values():
+        result.append({
+            "id": c["id"], "name": c["name"], "ticker": c["ticker"],
+            "type": c["type"], "ceo": c["ceo"],
+            "member_count": len(c.get("members", {})),
+            "treasury": c["treasury"], "sus_shares": c.get("sus_shares", 0),
+            "value": company_value(c, sus_price),
+            "stock_price": company_stock_price(c, sus_price),
+            "shares_issued": c.get("shares_issued", SHARES_ISSUED),
+            "description": c.get("description", ""),
+        })
+    result.sort(key=lambda x: x["value"], reverse=True)
+    return jsonify(result)
+
+
+@app.route("/api/companies/<cid>")
+def api_company(cid):
+    data = load_data()
+    sus_price = data["stock_price"]
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c:
+        return jsonify({"error": "not found"}), 404
+    uid = session.get("user_id")
+    c["_stock_price"] = company_stock_price(c, sus_price)
+    c["_value"] = company_value(c, sus_price)
+    c["_is_member"] = uid in c.get("members", {})
+    c["_is_ceo"] = is_ceo(c, uid) if uid else False
+    c["_my_shares"] = c.get("shareholders", {}).get(uid, 0)
+    c["_my_deposit"] = c.get("deposits", {}).get(uid, 0)
+    c["_my_loan"] = c.get("loans", {}).get(uid)
+    c["_my_policy"] = c.get("policies", {}).get(uid)
+    return jsonify(c)
+
+
+@app.route("/api/companies/create", methods=["POST"])
+def api_company_create():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    body = request.json
+    name = body.get("name", "").strip()[:40]
+    ticker = body.get("ticker", "").strip().upper()[:4]
+    ctype = body.get("type", "")
+    desc = body.get("description", "").strip()[:200]
+    if not name or not ticker or ctype not in COMPANY_TYPES:
+        return jsonify({"error": "invalid fields"}), 400
+    if not ticker.isalpha():
+        return jsonify({"error": "ticker must be letters only"}), 400
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    if u["balance"] < COMPANY_COST:
+        return jsonify({"error": f"Need ${COMPANY_COST:,.0f} to found a company"}), 400
+    companies = load_companies()
+    if any(c["ticker"] == ticker for c in companies.values()):
+        return jsonify({"error": "ticker already taken"}), 400
+    u["balance"] = round(u["balance"] - COMPANY_COST, 2)
+    save_data(data)
+    company = create_company(session["user_id"], name, ticker, ctype, desc)
+    companies[company["id"]] = company
+    save_companies(companies)
+    return jsonify({"ok": True, "company": company})
+
+
+@app.route("/api/companies/<cid>/join", methods=["POST"])
+def api_company_join(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c:
+        return jsonify({"error": "not found"}), 404
+    uid = session["user_id"]
+    if uid in c.get("members", {}):
+        return jsonify({"error": "already a member"}), 400
+    c.setdefault("members", {})[uid] = {"role": "member", "deposit": 0, "joined_at": int(time.time())}
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/deposit", methods=["POST"])
+def api_company_deposit(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    amount = float(request.json.get("amount", 0))
+    if amount <= 0:
+        return jsonify({"error": "invalid amount"}), 400
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or session["user_id"] not in c.get("members", {}):
+        return jsonify({"error": "not a member"}), 403
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    if u["balance"] < amount:
+        return jsonify({"error": "not enough cash"}), 400
+    u["balance"] = round(u["balance"] - amount, 2)
+    c["treasury"] = round(c["treasury"] + amount, 2)
+    c["members"][session["user_id"]]["deposit"] = round(c["members"][session["user_id"]].get("deposit", 0) + amount, 2)
+    if c["type"] == "savings":
+        c.setdefault("deposits", {})[session["user_id"]] = round(c["deposits"].get(session["user_id"], 0) + amount, 2)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True, "treasury": c["treasury"]})
+
+
+@app.route("/api/companies/<cid>/withdraw", methods=["POST"])
+def api_company_withdraw(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    amount = float(request.json.get("amount", 0))
+    uid = session["user_id"]
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or uid not in c.get("members", {}):
+        return jsonify({"error": "not a member"}), 403
+    member = c["members"][uid]
+    max_withdraw = member.get("deposit", 0) if not is_ceo(c, uid) else c["treasury"]
+    if amount > max_withdraw or amount > c["treasury"]:
+        return jsonify({"error": f"can only withdraw up to ${max_withdraw:.2f}"}), 400
+    data = load_data()
+    u = get_user(data, uid)
+    c["treasury"] = round(c["treasury"] - amount, 2)
+    member["deposit"] = round(max(0, member.get("deposit", 0) - amount), 2)
+    u["balance"] = round(u["balance"] + amount, 2)
+    if c["type"] == "savings":
+        c.setdefault("deposits", {})[uid] = round(max(0, c["deposits"].get(uid, 0) - amount), 2)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/buy_stock", methods=["POST"])
+def api_company_buy_stock(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    shares = int(request.json.get("shares", 0))
+    if shares <= 0:
+        return jsonify({"error": "invalid shares"}), 400
+    data = load_data()
+    sus_price = data["stock_price"]
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c:
+        return jsonify({"error": "not found"}), 404
+    price = company_stock_price(c, sus_price)
+    cost = round(price * shares, 2)
+    uid = session["user_id"]
+    u = get_user(data, uid)
+    if u["balance"] < cost:
+        return jsonify({"error": f"Need {fmt(cost)}"}), 400
+    # Investment Bank earns commission on trades
+    for oc in companies.values():
+        if oc["type"] == "invest_bank" and len(oc.get("members", {})) > 0:
+            commission = round(cost * 0.03, 2)
+            oc["treasury"] = round(oc["treasury"] + commission, 2)
+    u["balance"] = round(u["balance"] - cost, 2)
+    c["treasury"] = round(c["treasury"] + cost, 2)
+    c.setdefault("shareholders", {})[uid] = c["shareholders"].get(uid, 0) + shares
+    c["shares_issued"] = c.get("shares_issued", SHARES_ISSUED) + shares
+    new_price = company_stock_price(c, sus_price)
+    c["stock_price"] = new_price
+    c.setdefault("stock_history", []).append(new_price)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True, "shares": shares, "cost": cost, "new_price": new_price})
+
+
+@app.route("/api/companies/<cid>/sell_stock", methods=["POST"])
+def api_company_sell_stock(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    shares = int(request.json.get("shares", 0))
+    if shares <= 0:
+        return jsonify({"error": "invalid shares"}), 400
+    data = load_data()
+    sus_price = data["stock_price"]
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c:
+        return jsonify({"error": "not found"}), 404
+    uid = session["user_id"]
+    owned = c.get("shareholders", {}).get(uid, 0)
+    if owned < shares:
+        return jsonify({"error": f"only own {owned} shares"}), 400
+    price = company_stock_price(c, sus_price)
+    earnings = round(price * shares, 2)
+    if c["treasury"] < earnings:
+        return jsonify({"error": "company treasury too low to buy back"}), 400
+    # Investment Bank commission
+    for oc in companies.values():
+        if oc["type"] == "invest_bank" and len(oc.get("members", {})) > 0:
+            commission = round(earnings * 0.03, 2)
+            oc["treasury"] = round(oc["treasury"] + commission, 2)
+    data = load_data()
+    u = get_user(data, uid)
+    c["treasury"] = round(c["treasury"] - earnings, 2)
+    c["shareholders"][uid] = owned - shares
+    c["shares_issued"] = max(1, c.get("shares_issued", SHARES_ISSUED) - shares)
+    u["balance"] = round(u["balance"] + earnings, 2)
+    new_price = company_stock_price(c, sus_price)
+    c["stock_price"] = new_price
+    c.setdefault("stock_history", []).append(new_price)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True, "earnings": earnings})
+
+
+@app.route("/api/companies/<cid>/trade_sus", methods=["POST"])
+def api_company_trade_sus(cid):
+    """CEO-only: buy or sell SUS stock using company treasury."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    action = request.json.get("action")
+    shares = int(request.json.get("shares", 0))
+    if shares <= 0 or action not in ("buy", "sell"):
+        return jsonify({"error": "invalid"}), 400
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    data = load_data()
+    price = data["stock_price"]
+    if action == "buy":
+        cost = round(price * shares, 2)
+        if c["treasury"] < cost:
+            return jsonify({"error": "not enough treasury"}), 400
+        c["treasury"] = round(c["treasury"] - cost, 2)
+        c["sus_shares"] = c.get("sus_shares", 0) + shares
+    else:
+        if c.get("sus_shares", 0) < shares:
+            return jsonify({"error": "not enough SUS shares"}), 400
+        c["sus_shares"] -= shares
+        c["treasury"] = round(c["treasury"] + price * shares, 2)
+    save_companies(companies)
+    return jsonify({"ok": True, "treasury": c["treasury"], "sus_shares": c["sus_shares"]})
+
+
+@app.route("/api/companies/<cid>/vote", methods=["POST"])
+def api_company_vote(cid):
+    """Cast or create a vote (day_trading, pump_dump, wolf_pack)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    uid = session["user_id"]
+    if not c or uid not in c.get("members", {}):
+        return jsonify({"error": "not a member"}), 403
+    vote_type = request.json.get("vote")  # "buy" | "sell" | "hold"
+    vote = c.get("vote") or {"buy": [], "sell": [], "hold": [], "expires": int(time.time()) + 3600}
+    for v in ["buy", "sell", "hold"]:
+        if uid in vote.get(v, []):
+            vote[v].remove(uid)
+    vote.setdefault(vote_type, []).append(uid)
+    c["vote"] = vote
+    save_companies(companies)
+    return jsonify({"ok": True, "vote": vote})
+
+
+@app.route("/api/companies/<cid>/loan", methods=["POST"])
+def api_company_loan(cid):
+    """Request a loan from a Lending Bank."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    amount = float(request.json.get("amount", 0))
+    if amount <= 0:
+        return jsonify({"error": "invalid amount"}), 400
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or c["type"] != "lending_bank":
+        return jsonify({"error": "not a lending bank"}), 400
+    uid = session["user_id"]
+    if uid in c.get("loans", {}):
+        return jsonify({"error": "already have a loan"}), 400
+    if c["treasury"] < amount:
+        return jsonify({"error": "bank insufficient funds"}), 400
+    data = load_data()
+    u = get_user(data, uid)
+    rate = 0.05  # 5% per 20min cycle
+    c["treasury"] = round(c["treasury"] - amount, 2)
+    c.setdefault("loans", {})[uid] = {"amount": amount, "rate": rate, "due": round(amount * 1.2, 2)}
+    u["balance"] = round(u["balance"] + amount, 2)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True, "amount": amount, "due": c["loans"][uid]["due"]})
+
+
+@app.route("/api/companies/<cid>/repay", methods=["POST"])
+def api_company_repay(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    uid = session["user_id"]
+    if not c or uid not in c.get("loans", {}):
+        return jsonify({"error": "no loan found"}), 400
+    loan = c["loans"][uid]
+    data = load_data()
+    u = get_user(data, uid)
+    if u["balance"] < loan["due"]:
+        return jsonify({"error": f"need {fmt(loan['due'])} to repay"}), 400
+    u["balance"] = round(u["balance"] - loan["due"], 2)
+    c["treasury"] = round(c["treasury"] + loan["due"], 2)
+    del c["loans"][uid]
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/insure", methods=["POST"])
+def api_company_insure(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or c["type"] != "insurance":
+        return jsonify({"error": "not an insurance company"}), 400
+    uid = session["user_id"]
+    premium = float(request.json.get("premium", 50))
+    data = load_data()
+    u = get_user(data, uid)
+    if u["balance"] < premium:
+        return jsonify({"error": "not enough cash"}), 400
+    u["balance"] = round(u["balance"] - premium, 2)
+    c["treasury"] = round(c["treasury"] + premium, 2)
+    net_worth = u["balance"] + u.get("shares", 0) * data["stock_price"]
+    c.setdefault("policies", {})[uid] = {"premium": premium, "coverage": round(net_worth * 0.5, 2), "snapshot": round(net_worth, 2)}
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True, "coverage": c["policies"][uid]["coverage"]})
+
+
+@app.route("/api/companies/<cid>/bounty", methods=["POST"])
+def api_company_bounty(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or c["type"] != "bounty_hunter":
+        return jsonify({"error": "not a bounty hunter"}), 400
+    target_id = str(request.json.get("target_id", ""))
+    amount = float(request.json.get("amount", 0))
+    if not target_id or amount <= 0:
+        return jsonify({"error": "invalid"}), 400
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    if u["balance"] < amount:
+        return jsonify({"error": "not enough cash"}), 400
+    u["balance"] = round(u["balance"] - amount, 2)
+    c["treasury"] = round(c["treasury"] + amount * 0.3, 2)
+    c.setdefault("bounties", []).append({
+        "target": target_id, "amount": amount, "poster": session["user_id"],
+        "expires": int(time.time()) + 86400
+    })
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/set_spread", methods=["POST"])
+def api_company_set_spread(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or c["type"] != "market_maker" or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO of market maker only"}), 403
+    c["spread_buy"] = float(request.json.get("buy", 0))
+    c["spread_sell"] = float(request.json.get("sell", 0))
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/market_trade", methods=["POST"])
+def api_company_market_trade(cid):
+    """Trade with Market Maker at their spread price."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    action = request.json.get("action")
+    shares = int(request.json.get("shares", 0))
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or c["type"] != "market_maker":
+        return jsonify({"error": "not a market maker"}), 400
+    data = load_data()
+    uid = session["user_id"]
+    u = get_user(data, uid)
+    if action == "buy":
+        price = c.get("spread_sell", data["stock_price"] * 1.02)
+        cost = round(price * shares, 2)
+        if u["balance"] < cost:
+            return jsonify({"error": "not enough cash"}), 400
+        if c.get("sus_shares", 0) < shares:
+            return jsonify({"error": "market maker has no shares"}), 400
+        u["balance"] = round(u["balance"] - cost, 2)
+        u["shares"] = u.get("shares", 0) + shares
+        c["sus_shares"] -= shares
+        c["treasury"] = round(c["treasury"] + cost, 2)
+    else:
+        price = c.get("spread_buy", data["stock_price"] * 0.98)
+        earnings = round(price * shares, 2)
+        if u.get("shares", 0) < shares:
+            return jsonify({"error": "not enough SUS shares"}), 400
+        if c["treasury"] < earnings:
+            return jsonify({"error": "market maker low on cash"}), 400
+        u["shares"] = u.get("shares", 0) - shares
+        u["balance"] = round(u["balance"] + earnings, 2)
+        c["sus_shares"] = c.get("sus_shares", 0) + shares
+        c["treasury"] = round(c["treasury"] - earnings, 2)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/pay_protection", methods=["POST"])
+def api_company_pay_protection(cid):
+    """Pay protection to Sus Mafia."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    amount = float(request.json.get("amount", 100))
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or c["type"] != "sus_mafia":
+        return jsonify({"error": "not the mafia"}), 400
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    if u["balance"] < amount:
+        return jsonify({"error": "not enough cash"}), 400
+    u["balance"] = round(u["balance"] - amount, 2)
+    c["treasury"] = round(c["treasury"] + amount, 2)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
     return render_template_string(DASHBOARD_HTML)
+
+
+@app.route("/companies")
+def companies_page():
+    return render_template_string(COMPANIES_HTML)
 
 
 DASHBOARD_HTML = """
@@ -598,6 +1059,7 @@ DASHBOARD_HTML = """
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
+  <a href="/companies" style="color:var(--muted);text-decoration:none;font-size:13px;font-weight:700;margin-left:8px">🏢 Companies</a>
   <div class="auth-area" id="auth-area">
     <a href="/login" class="btn btn-discord">
       <svg width="16" height="12" viewBox="0 0 71 55" fill="white"><path d="M60.1 4.9A58.6 58.6 0 0 0 45.6.4a.2.2 0 0 0-.2.1 40.8 40.8 0 0 0-1.8 3.7 54.1 54.1 0 0 0-16.2 0 37.6 37.6 0 0 0-1.8-3.7.22.22 0 0 0-.2-.1A58.4 58.4 0 0 0 10.9 4.9a.2.2 0 0 0-.1.1C1.6 18.1-.9 31 .3 43.7a.24.24 0 0 0 .1.2 58.9 58.9 0 0 0 17.7 8.9.22.22 0 0 0 .2-.1 42 42 0 0 0 3.6-5.9.21.21 0 0 0-.1-.3 38.7 38.7 0 0 1-5.5-2.6.22.22 0 0 1 0-.4c.4-.3.7-.5 1.1-.8a.21.21 0 0 1 .2 0c11.5 5.3 24 5.3 35.4 0a.21.21 0 0 1 .2 0l1.1.8a.22.22 0 0 1 0 .4 36.3 36.3 0 0 1-5.5 2.6.22.22 0 0 0-.1.3 47.1 47.1 0 0 0 3.6 5.9.21.21 0 0 0 .2.1 58.7 58.7 0 0 0 17.7-8.9.23.23 0 0 0 .1-.2c1.5-15.1-2.4-28-10.4-39.5a.18.18 0 0 0-.1-.2zM23.7 36c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2zm23.6 0c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2z"/></svg>
@@ -1146,6 +1608,439 @@ async function adminReset(uid, name) {
   const d = await res.json();
   if (d.ok) { showToast(`Reset ${name}`); loadAdmin(); }
 }
+</script>
+</body>
+</html>
+"""
+
+COMPANIES_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Sus Stock — Companies</title>
+<style>
+  :root { --bg:#1e1f22;--surface:#2b2d31;--surface2:#313338;--accent:#5865f2;--green:#57f287;--red:#ed4245;--text:#dbdee1;--muted:#949ba4;--border:#3a3c40; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;min-height:100vh}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:16px}
+  header h1{font-size:20px;font-weight:700}
+  .nav-link{color:var(--muted);text-decoration:none;font-size:13px;font-weight:600}
+  .nav-link:hover{color:var(--text)}
+  .auth-area{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .btn{padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;border:none;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
+  .btn-primary{background:var(--accent);color:#fff}
+  .btn-primary:hover{background:#4752c4}
+  .btn-green{background:#57f28722;color:var(--green);border:1px solid #57f28740}
+  .btn-red{background:#ed424522;color:var(--red);border:1px solid #ed424540}
+  .btn-muted{background:var(--surface2);color:var(--muted)}
+  .avatar{width:30px;height:30px;border-radius:50%}
+  .container{max-width:1200px;margin:0 auto;padding:24px 28px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:16px}
+  .card-title{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+  .company-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;cursor:pointer;transition:border-color .2s}
+  .company-card:hover{border-color:var(--accent)}
+  .company-header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  .company-emoji{font-size:28px}
+  .company-name{font-size:16px;font-weight:700}
+  .company-ticker{font-size:12px;color:var(--muted);font-weight:700}
+  .company-type{font-size:11px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+  .stat-row{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)}
+  .stat-row:last-child{border-bottom:none}
+  .stat-label{color:var(--muted)}
+  .stat-value{font-weight:700}
+  input,select,textarea{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 12px;font-size:13px;width:100%;outline:none;margin-bottom:8px}
+  input:focus,select:focus{border-color:var(--accent)}
+  .modal-bg{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:100;display:none}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:28px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto}
+  .modal h2{font-size:18px;font-weight:700;margin-bottom:16px}
+  .tab-bar{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
+  .tab-btn{background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:12px;font-weight:700;padding:5px 12px;border-radius:6px;cursor:pointer}
+  .tab-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .badge{font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px}
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;font-size:13px;font-weight:600;opacity:0;transition:opacity .3s;pointer-events:none;z-index:200}
+  .toast.show{opacity:1}
+  .toast.ok{border-color:var(--green);color:var(--green)}
+  .toast.err{border-color:var(--red);color:var(--red)}
+  .type-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:12px}
+  .type-option{background:var(--surface2);border:2px solid var(--border);border-radius:8px;padding:10px;cursor:pointer;text-align:center}
+  .type-option.selected{border-color:var(--accent)}
+  .type-option .emoji{font-size:22px}
+  .type-option .tname{font-size:12px;font-weight:700;margin-top:4px}
+  .type-option .tdesc{font-size:10px;color:var(--muted);margin-top:2px}
+</style>
+</head>
+<body>
+<header>
+  <span style="font-size:22px">🏢</span>
+  <h1>Companies</h1>
+  <a href="/" class="nav-link">← Back to Market</a>
+  <div class="auth-area" id="auth-area">
+    <a href="/login" class="btn btn-primary">Login with Discord</a>
+  </div>
+</header>
+
+<div class="container">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+    <div>
+      <div style="font-size:22px;font-weight:800">Sus Corp Market</div>
+      <div style="color:var(--muted);font-size:13px">Found or join companies. Each has unique mechanics.</div>
+    </div>
+    <button class="btn btn-primary" onclick="showCreate()">+ Found Company ($2,000)</button>
+  </div>
+
+  <div id="companies-grid" class="grid">Loading...</div>
+</div>
+
+<!-- Company detail modal -->
+<div class="modal-bg" id="detail-modal">
+  <div class="modal" id="detail-content"></div>
+</div>
+
+<!-- Create company modal -->
+<div class="modal-bg" id="create-modal">
+  <div class="modal">
+    <h2>🏢 Found a Company</h2>
+    <input id="c-name" placeholder="Company name"/>
+    <input id="c-ticker" placeholder="Ticker (2-4 letters)" maxlength="4" style="text-transform:uppercase"/>
+    <textarea id="c-desc" placeholder="Description (optional)" rows="2" style="resize:none"></textarea>
+    <div class="card-title">Choose Type</div>
+    <div class="type-grid" id="type-grid"></div>
+    <input type="hidden" id="c-type"/>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-primary" style="flex:1" onclick="submitCreate()">Found Company — $2,000</button>
+      <button class="btn btn-muted" onclick="hideCreate()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const fmt = v => '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+let myUserId = null;
+let myUsername = null;
+let allCompanies = [];
+let selectedType = null;
+
+function showToast(msg, ok=true) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast show ' + (ok?'ok':'err');
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+async function init() {
+  const me = await fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null);
+  if (me) {
+    myUserId = me.user_id; myUsername = me.username;
+    const avatarUrl = me.avatar ? `https://cdn.discordapp.com/avatars/${me.user_id}/${me.avatar}.png?size=64` : '';
+    document.getElementById('auth-area').innerHTML = `${avatarUrl ? `<img src="${avatarUrl}" class="avatar"/>` : ''}<span style="font-weight:600;font-size:13px">${me.username}</span><a href="/logout" class="btn btn-muted" style="font-size:12px;padding:5px 12px">Logout</a>`;
+  }
+  await loadCompanies();
+  buildTypeGrid();
+}
+
+function buildTypeGrid() {
+  const types = ${json.dumps({k: {"name": v["name"], "emoji": v["emoji"], "desc": v["desc"]} for k, v in COMPANY_TYPES.items()})};
+  const grid = document.getElementById('type-grid');
+  grid.innerHTML = Object.entries(types).map(([k,v]) => `
+    <div class="type-option" onclick="selectType('${k}',this)">
+      <div class="emoji">${v.emoji}</div>
+      <div class="tname">${v.name}</div>
+      <div class="tdesc">${v.desc}</div>
+    </div>`).join('');
+}
+
+function selectType(type, el) {
+  document.querySelectorAll('.type-option').forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected'); selectedType = type;
+  document.getElementById('c-type').value = type;
+}
+
+async function loadCompanies() {
+  allCompanies = await fetch('/api/companies').then(r => r.json()).catch(() => []);
+  renderCompanies();
+}
+
+function renderCompanies() {
+  const types = ${json.dumps({k: {"name": v["name"], "emoji": v["emoji"]} for k, v in COMPANY_TYPES.items()})};
+  const grid = document.getElementById('companies-grid');
+  if (!allCompanies.length) { grid.innerHTML = '<div style="color:var(--muted);padding:20px">No companies yet. Be the first to found one!</div>'; return; }
+  grid.innerHTML = allCompanies.map(c => {
+    const t = types[c.type] || {name: c.type, emoji: '🏢'};
+    return `<div class="company-card" onclick="openCompany('${c.id}')">
+      <div class="company-header">
+        <div class="company-emoji">${t.emoji}</div>
+        <div>
+          <div class="company-name">${c.name}</div>
+          <div class="company-ticker">${c.ticker} · <span class="company-type">${t.name}</span></div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <div style="font-size:18px;font-weight:800">${fmt(c.stock_price)}</div>
+          <div style="font-size:11px;color:var(--muted)">per share</div>
+        </div>
+      </div>
+      <div class="stat-row"><span class="stat-label">Treasury</span><span class="stat-value">${fmt(c.treasury)}</span></div>
+      <div class="stat-row"><span class="stat-label">Company Value</span><span class="stat-value">${fmt(c.value)}</span></div>
+      <div class="stat-row"><span class="stat-label">Members</span><span class="stat-value">${c.member_count}</span></div>
+      <div class="stat-row"><span class="stat-label">Description</span><span class="stat-value" style="color:var(--muted);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.description || '—'}</span></div>
+    </div>`;
+  }).join('');
+}
+
+async function openCompany(cid) {
+  const c = await fetch(`/api/companies/${cid}`).then(r => r.json());
+  const types = ${json.dumps({k: {"name": v["name"], "emoji": v["emoji"]} for k, v in COMPANY_TYPES.items()})};
+  const t = types[c.type] || {name:c.type, emoji:'🏢'};
+  const isMember = c._is_member;
+  const isCeo = c._is_ceo;
+
+  let typePanel = buildTypePanel(c, isMember, isCeo);
+
+  document.getElementById('detail-content').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+      <div>
+        <div style="font-size:24px;font-weight:800">${t.emoji} ${c.name}</div>
+        <div style="color:var(--muted);font-size:13px">${c.ticker} · ${t.name}</div>
+        <div style="color:var(--muted);font-size:12px;margin-top:4px">${c.description || ''}</div>
+      </div>
+      <button onclick="closeDetail()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <div style="background:var(--surface2);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Stock Price</div><div style="font-size:20px;font-weight:700">${fmt(c._stock_price)}</div></div>
+      <div style="background:var(--surface2);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Company Value</div><div style="font-size:20px;font-weight:700">${fmt(c._value)}</div></div>
+      <div style="background:var(--surface2);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Treasury</div><div style="font-size:16px;font-weight:700">${fmt(c.treasury)}</div></div>
+      <div style="background:var(--surface2);border-radius:8px;padding:12px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">Your Shares</div><div style="font-size:16px;font-weight:700">${c._my_shares || 0}</div></div>
+    </div>
+
+    <!-- Stock trading -->
+    <div style="margin-bottom:16px">
+      <div class="card-title">Company Stock</div>
+      <div style="display:flex;gap:8px">
+        <input type="number" id="stock-shares" placeholder="Shares" min="1" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-green" onclick="buyStock('${cid}')">Buy</button>
+        <button class="btn btn-red" onclick="sellStock('${cid}')">Sell</button>
+      </div>
+    </div>
+
+    <!-- Deposit/Withdraw -->
+    ${isMember ? `<div style="margin-bottom:16px">
+      <div class="card-title">Treasury</div>
+      <div style="display:flex;gap:8px">
+        <input type="number" id="dep-amount" placeholder="Amount" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-green" onclick="deposit('${cid}')">Deposit</button>
+        <button class="btn btn-red" onclick="withdraw('${cid}')">Withdraw</button>
+      </div>
+    </div>` : `<button class="btn btn-primary" style="width:100%;margin-bottom:16px" onclick="joinCompany('${cid}')">Join Company</button>`}
+
+    <!-- CEO: Trade SUS with treasury -->
+    ${isCeo ? `<div style="margin-bottom:16px">
+      <div class="card-title">CEO Controls — Trade SUS</div>
+      <div style="display:flex;gap:8px">
+        <input type="number" id="sus-shares" placeholder="SUS shares" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-green" onclick="tradeSus('${cid}','buy')">Buy SUS</button>
+        <button class="btn btn-red" onclick="tradeSus('${cid}','sell')">Sell SUS</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Company holds: ${c.sus_shares || 0} SUS shares</div>
+    </div>` : ''}
+
+    <!-- Type-specific panel -->
+    ${typePanel}
+  `;
+  document.getElementById('detail-modal').style.display = 'flex';
+}
+
+function buildTypePanel(c, isMember, isCeo) {
+  const cid = c.id;
+  switch(c.type) {
+    case 'lending_bank': return `
+      <div><div class="card-title">Loans</div>
+      ${c._my_loan ? `<div style="color:var(--red);margin-bottom:8px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-red" style="width:100%" onclick="repayLoan('${cid}')">Repay Loan</button>` :
+      `<input type="number" id="loan-amt" placeholder="Loan amount"/><button class="btn btn-primary" style="width:100%" onclick="requestLoan('${cid}')">Request Loan (20% interest)</button>`}</div>`;
+    case 'savings': return `
+      <div><div class="card-title">Savings (3% per 20min)</div>
+      <div style="margin-bottom:8px;color:var(--green)">Your deposit: ${fmt(c._my_deposit || 0)}</div>
+      <div style="font-size:11px;color:var(--muted)">Deposit into treasury to earn interest automatically.</div></div>`;
+    case 'insurance': return `
+      <div><div class="card-title">Insurance</div>
+      ${c._my_policy ? `<div style="color:var(--green)">Covered: ${fmt(c._my_policy.coverage)}</div>` :
+      `<input type="number" id="premium-amt" placeholder="Premium amount ($50 min)" value="50"/><button class="btn btn-primary" style="width:100%" onclick="buyInsurance('${cid}')">Buy Coverage</button>`}</div>`;
+    case 'bounty_hunter': return `
+      <div><div class="card-title">Post a Bounty</div>
+      <input id="bounty-target" placeholder="Target User ID"/>
+      <input type="number" id="bounty-amt" placeholder="Bounty amount"/>
+      <button class="btn btn-red" style="width:100%" onclick="postBounty('${cid}')">Post Bounty (30% to company)</button>
+      <div style="margin-top:8px;font-size:11px;color:var(--muted)">Active bounties: ${(c.bounties||[]).length}</div></div>`;
+    case 'market_maker': return `
+      <div><div class="card-title">Trade at Spread${isCeo ? ' (CEO sets spread)' : ''}</div>
+      ${isCeo ? `<div style="display:flex;gap:8px;margin-bottom:8px"><input type="number" id="spread-buy" placeholder="Buy price" style="flex:1"/><input type="number" id="spread-sell" placeholder="Sell price" style="flex:1"/></div><button class="btn btn-primary" onclick="setSpread('${cid}')" style="width:100%;margin-bottom:8px">Set Spread</button>` : ''}
+      <div style="margin-bottom:8px;font-size:13px">Buy @ ${fmt(c.spread_sell||0)} · Sell @ ${fmt(c.spread_buy||0)}</div>
+      <div style="display:flex;gap:8px"><input type="number" id="mm-shares" placeholder="Shares" style="flex:1;margin-bottom:0"/>
+      <button class="btn btn-green" onclick="mmTrade('${cid}','buy')">Buy</button>
+      <button class="btn btn-red" onclick="mmTrade('${cid}','sell')">Sell</button></div></div>`;
+    case 'day_trading': case 'pump_dump': case 'wolf_pack': {
+      const vote = c.vote || {};
+      const total = (vote.buy||[]).length + (vote.sell||[]).length + (vote.hold||[]).length;
+      return `<div><div class="card-title">Vote</div>
+        <div style="display:flex;gap:8px">${['buy','sell','hold'].map(v => `<button class="btn ${v==='buy'?'btn-green':v==='sell'?'btn-red':'btn-muted'}" style="flex:1" onclick="castVote('${cid}','${v}')">${v.toUpperCase()} (${(vote[v]||[]).length})</button>`).join('')}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">${total} votes cast · Executes when majority reached</div></div>`;
+    }
+    case 'sus_mafia': return `
+      <div><div class="card-title">🤌 Pay Protection</div>
+      <input type="number" id="prot-amt" placeholder="Amount" value="100"/>
+      <button class="btn btn-red" style="width:100%" onclick="payProtection('${cid}')">Pay Protection</button>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">The mafia appreciates your cooperation.</div></div>`;
+    case 'insider_ring': return `
+      <div><div class="card-title">🔍 Insider Feed</div>
+      ${isMember ? `<div style="font-size:13px;color:var(--green)">You receive news 5 minutes early. Check the market news panel.</div>` : '<div style="color:var(--muted);font-size:13px">Join to access early news.</div>'}</div>`;
+    default: return '';
+  }
+}
+
+function closeDetail() { document.getElementById('detail-modal').style.display = 'none'; }
+
+async function joinCompany(cid) {
+  const res = await fetch(`/api/companies/${cid}/join`, {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast('Joined company!'); openCompany(cid); loadCompanies();
+}
+
+async function buyStock(cid) {
+  const shares = parseInt(document.getElementById('stock-shares').value);
+  if (!shares) { showToast('Enter shares', false); return; }
+  const res = await fetch(`/api/companies/${cid}/buy_stock`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({shares})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Bought ${shares} shares for ${fmt(d.cost)}`); openCompany(cid); loadCompanies();
+}
+
+async function sellStock(cid) {
+  const shares = parseInt(document.getElementById('stock-shares').value);
+  if (!shares) { showToast('Enter shares', false); return; }
+  const res = await fetch(`/api/companies/${cid}/sell_stock`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({shares})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Sold for ${fmt(d.earnings)}`); openCompany(cid); loadCompanies();
+}
+
+async function deposit(cid) {
+  const amount = parseFloat(document.getElementById('dep-amount').value);
+  if (!amount) { showToast('Enter amount', false); return; }
+  const res = await fetch(`/api/companies/${cid}/deposit`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({amount})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Deposited ${fmt(amount)}`); openCompany(cid);
+}
+
+async function withdraw(cid) {
+  const amount = parseFloat(document.getElementById('dep-amount').value);
+  if (!amount) { showToast('Enter amount', false); return; }
+  const res = await fetch(`/api/companies/${cid}/withdraw`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({amount})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Withdrew ${fmt(amount)}`); openCompany(cid);
+}
+
+async function tradeSus(cid, action) {
+  const shares = parseInt(document.getElementById('sus-shares').value);
+  if (!shares) { showToast('Enter shares', false); return; }
+  const res = await fetch(`/api/companies/${cid}/trade_sus`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action, shares})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`${action === 'buy' ? 'Bought' : 'Sold'} ${shares} SUS shares`); openCompany(cid);
+}
+
+async function castVote(cid, vote) {
+  const res = await fetch(`/api/companies/${cid}/vote`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({vote})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Voted ${vote.toUpperCase()}`); openCompany(cid);
+}
+
+async function requestLoan(cid) {
+  const amount = parseFloat(document.getElementById('loan-amt')?.value);
+  if (!amount) { showToast('Enter amount', false); return; }
+  const res = await fetch(`/api/companies/${cid}/loan`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({amount})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Loan of ${fmt(amount)} received. Due: ${fmt(d.due)}`); openCompany(cid);
+}
+
+async function repayLoan(cid) {
+  const res = await fetch(`/api/companies/${cid}/repay`, {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast('Loan repaid!'); openCompany(cid);
+}
+
+async function buyInsurance(cid) {
+  const premium = parseFloat(document.getElementById('premium-amt')?.value || 50);
+  const res = await fetch(`/api/companies/${cid}/insure`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({premium})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Insured! Coverage: ${fmt(d.coverage)}`); openCompany(cid);
+}
+
+async function postBounty(cid) {
+  const target_id = document.getElementById('bounty-target')?.value;
+  const amount = parseFloat(document.getElementById('bounty-amt')?.value);
+  const res = await fetch(`/api/companies/${cid}/bounty`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({target_id, amount})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast('Bounty posted!'); openCompany(cid);
+}
+
+async function setSpread(cid) {
+  const buy = parseFloat(document.getElementById('spread-buy')?.value);
+  const sell = parseFloat(document.getElementById('spread-sell')?.value);
+  const res = await fetch(`/api/companies/${cid}/set_spread`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({buy, sell})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast('Spread set!'); openCompany(cid);
+}
+
+async function mmTrade(cid, action) {
+  const shares = parseInt(document.getElementById('mm-shares')?.value);
+  if (!shares) { showToast('Enter shares', false); return; }
+  const res = await fetch(`/api/companies/${cid}/market_trade`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action, shares})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Trade executed`); openCompany(cid);
+}
+
+async function payProtection(cid) {
+  const amount = parseFloat(document.getElementById('prot-amt')?.value || 100);
+  const res = await fetch(`/api/companies/${cid}/pay_protection`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({amount})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast('Protection paid. You are safe... for now.'); openCompany(cid);
+}
+
+function showCreate() {
+  if (!myUserId) { showToast('Login first', false); return; }
+  document.getElementById('create-modal').style.display = 'flex';
+}
+
+function hideCreate() { document.getElementById('create-modal').style.display = 'none'; }
+
+async function submitCreate() {
+  const name = document.getElementById('c-name').value.trim();
+  const ticker = document.getElementById('c-ticker').value.trim().toUpperCase();
+  const desc = document.getElementById('c-desc').value.trim();
+  const type = selectedType;
+  if (!name || !ticker || !type) { showToast('Fill in all fields and select a type', false); return; }
+  const res = await fetch('/api/companies/create', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, ticker, description: desc, type})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`${name} founded!`); hideCreate(); loadCompanies();
+}
+
+init();
+setInterval(loadCompanies, 30000);
 </script>
 </body>
 </html>

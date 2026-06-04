@@ -2,5 +2,5 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python server.py"
+startCommand = "bash start.sh"
 restartPolicyType = "always"

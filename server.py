@@ -485,6 +485,19 @@ DASHBOARD_HTML = """
       </div>
       <div class="updated" id="updated">—</div>
     </div>
+
+    <!-- Chat -->
+    <div class="card">
+      <div class="card-title">💬 Live Chat</div>
+      <div id="chat-messages" style="height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;scroll-behavior:smooth"></div>
+      <div id="chat-input-area" style="display:flex;gap:8px">
+        <input id="chat-input" class="trade-input" placeholder="Say something..." style="flex:1;font-size:13px;padding:7px 10px" onkeydown="if(event.key==='Enter')sendChat()" maxlength="300"/>
+        <button class="btn btn-discord" style="padding:7px 14px;font-size:13px" onclick="sendChat()">Send</button>
+      </div>
+      <div id="chat-login-prompt" style="text-align:center;font-size:12px;color:var(--muted);margin-top:8px;display:none">
+        <a href="/login" style="color:var(--accent);font-weight:600">Login with Discord</a> to chat
+      </div>
+    </div>
   </div>
 
   <!-- Right column -->
@@ -521,25 +534,6 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
-<!-- Chat panel -->
-<div id="chat-panel" style="position:fixed;bottom:0;right:24px;width:320px;z-index:50;display:flex;flex-direction:column;box-shadow:0 -4px 24px #0006">
-  <div id="chat-header" onclick="toggleChat()" style="background:var(--accent);color:#fff;padding:10px 16px;border-radius:12px 12px 0 0;cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none">
-    <span style="font-size:16px">💬</span>
-    <span style="font-weight:700;font-size:14px">Live Chat</span>
-    <span id="chat-unread" style="background:#fff;color:var(--accent);font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;display:none"></span>
-    <span style="margin-left:auto;font-size:12px" id="chat-chevron">▲</span>
-  </div>
-  <div id="chat-body" style="background:var(--surface);border:1px solid var(--border);border-top:none;display:flex;flex-direction:column;height:360px">
-    <div id="chat-messages" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth"></div>
-    <div id="chat-input-area" style="padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px">
-      <input id="chat-input" class="trade-input" placeholder="Say something..." style="flex:1;font-size:13px;padding:7px 10px" onkeydown="if(event.key==='Enter')sendChat()" maxlength="300"/>
-      <button class="btn btn-discord" style="padding:7px 12px;font-size:13px" onclick="sendChat()">Send</button>
-    </div>
-    <div id="chat-login-prompt" style="padding:12px;text-align:center;font-size:12px;color:var(--muted);border-top:1px solid var(--border);display:none">
-      <a href="/login" style="color:var(--accent);font-weight:600">Login with Discord</a> to chat
-    </div>
-  </div>
-</div>
 
 <div class="toast" id="toast"></div>
 
@@ -684,17 +678,8 @@ async function fetchLeaderboard() {
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
-let chatOpen = true;
 let lastMsgId = 0;
-let unreadCount = 0;
 let isLoggedIn = false;
-
-function toggleChat() {
-  chatOpen = !chatOpen;
-  document.getElementById('chat-body').style.display = chatOpen ? 'flex' : 'none';
-  document.getElementById('chat-chevron').textContent = chatOpen ? '▲' : '▼';
-  if (chatOpen) { unreadCount = 0; document.getElementById('chat-unread').style.display = 'none'; }
-}
 
 function tsToTime(ts) {
   return new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
@@ -718,12 +703,6 @@ function appendMessage(m, scroll=true) {
   el.appendChild(div);
   if (scroll) el.scrollTop = el.scrollHeight;
   lastMsgId = Math.max(lastMsgId, m.id);
-  if (!chatOpen && !isMe) {
-    unreadCount++;
-    const badge = document.getElementById('chat-unread');
-    badge.textContent = unreadCount;
-    badge.style.display = 'inline';
-  }
 }
 
 async function fetchChat() {

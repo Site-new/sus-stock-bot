@@ -694,6 +694,12 @@ DASHBOARD_HTML = """
       <div id="leaderboard">Loading...</div>
       <div class="updated" id="lb-updated">—</div>
     </div>
+
+    <!-- News feed -->
+    <div class="card">
+      <div class="card-title">📰 Market News</div>
+      <div id="news-feed"><div style="color:var(--muted);font-size:13px">No events yet — check back soon.</div></div>
+    </div>
   </div>
 </div>
 
@@ -772,13 +778,28 @@ async function fetchStock() {
     const sl = s > 75 ? 'Extreme Greed 😏' : s > 55 ? 'Greed 😌' : s < 25 ? 'Extreme Fear 😱' : s < 45 ? 'Fear 😰' : 'Neutral 😐';
     document.getElementById('sentiment-badge').textContent = `${sl} (${s})`;
   }
-  // News ticker
+  // News ticker (top bar) + full news feed
   if (d.news && d.news.length) {
-    const ticker = document.getElementById('news-ticker');
     const latest = d.news[d.news.length - 1];
+    const ticker = document.getElementById('news-ticker');
     ticker.textContent = latest.headline;
     ticker.style.display = 'block';
     ticker.style.color = latest.positive ? 'var(--green)' : 'var(--red)';
+
+    const feed = document.getElementById('news-feed');
+    if (feed) {
+      feed.innerHTML = [...d.news].reverse().map(n => {
+        const t = new Date(n.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        const impact = n.impact ? ` <span style="font-size:11px;font-weight:700;color:${n.impact>0?'var(--green)':'var(--red)'}">${n.impact>0?'+':''}${n.impact.toFixed(1)}%</span>` : '';
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">
+          <span style="font-size:18px;flex-shrink:0">${n.positive ? '📈' : '📉'}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;line-height:1.4">${n.headline}${impact}</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px">${t}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
   }
   document.getElementById('range-marker').style.left = ((price - 5) / 495 * 100) + '%';
   document.getElementById('range-label').textContent = fmt(price);

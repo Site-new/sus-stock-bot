@@ -861,7 +861,7 @@ async def before_dividends():
     await bot.wait_until_ready()
 
 
-@tasks.loop(hours=1)
+@tasks.loop(minutes=30)
 async def update_bull_bear():
     """Randomly shift the market into bull, bear, or neutral cycle."""
     data = load_data()

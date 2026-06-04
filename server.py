@@ -212,7 +212,19 @@ def api_stock():
     change = round(price - prev, 2)
     pct = round((change / prev * 100) if prev else 0, 2)
     timestamps = data.get("price_timestamps", [])[-100:]
-    return jsonify({"price": price, "change": change, "change_pct": pct, "history": history[-100:], "timestamps": timestamps})
+    import datetime as dt, pytz
+    cst = dt.timezone(dt.timedelta(hours=-6))
+    hour = dt.datetime.now(cst).hour
+    market_open = hour >= 12
+    cycle = data.get("bull_bear", "neutral")
+    sentiment = data.get("sentiment", 50)
+    news = data.get("news_feed", [])[-10:]
+    return jsonify({
+        "price": price, "change": change, "change_pct": pct,
+        "history": history[-100:], "timestamps": timestamps,
+        "market_open": market_open, "bull_bear": cycle,
+        "sentiment": sentiment, "news": news,
+    })
 
 
 @app.route("/api/leaderboard")
@@ -241,16 +253,23 @@ def api_me():
     price = data["stock_price"]
     invested = round(u["shares"] * price, 2)
     net_worth = round(u["balance"] + invested, 2)
+    uid = session["user_id"]
+    short = data.get("shorts", {}).get(uid)
+    short_pnl = round((short["entry_price"] - price) * short["shares"], 2) if short else None
+    limit_orders = [o for o in data.get("limit_orders", []) if o["user_id"] == uid]
     return jsonify({
         "username": session["username"],
         "avatar": session.get("avatar"),
-        "user_id": session["user_id"],
+        "user_id": uid,
         "shares": u["shares"],
         "cash": u["balance"],
         "invested": invested,
         "net_worth": net_worth,
         "pnl": round(net_worth - STARTING_BALANCE, 2),
         "price": price,
+        "short": short,
+        "short_pnl": short_pnl,
+        "limit_orders": limit_orders,
     })
 
 
@@ -489,8 +508,18 @@ DASHBOARD_HTML = """
 <div class="layout">
   <!-- Left column -->
   <div>
+    <!-- News ticker -->
+    <div id="news-ticker" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:var(--text);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:none">
+      📰 Loading news...
+    </div>
+
     <div class="card">
-      <div class="card-title">SUS / USD</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <div class="card-title" style="margin-bottom:0">SUS / USD</div>
+        <span id="market-badge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:#57f28722;color:var(--green)">🟢 OPEN</span>
+        <span id="cycle-badge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface2);color:var(--muted)">😐 Neutral</span>
+        <span id="sentiment-badge" style="font-size:10px;padding:2px 8px;border-radius:999px;background:var(--surface2);color:var(--muted);margin-left:auto">Sentiment 50</span>
+      </div>
       <div class="price-hero">
         <span class="price" id="price">—</span>
         <span class="change-badge" id="change-badge">—</span>
@@ -624,6 +653,33 @@ async function fetchStock() {
   fullHistory = history;
   fullTimestamps = timestamps || [];
   renderChart();
+
+  // Market status badges
+  const mb = document.getElementById('market-badge');
+  if (d.market_open !== undefined) {
+    mb.textContent = d.market_open ? '🟢 OPEN' : '🔴 CLOSED';
+    mb.style.background = d.market_open ? '#57f28722' : '#ed424522';
+    mb.style.color = d.market_open ? 'var(--green)' : 'var(--red)';
+  }
+  const cb = document.getElementById('cycle-badge');
+  if (d.bull_bear) {
+    const cycleMap = {bull: '🐂 Bull', bear: '🐻 Bear', neutral: '😐 Neutral'};
+    cb.textContent = cycleMap[d.bull_bear] || '😐 Neutral';
+    cb.style.color = d.bull_bear === 'bull' ? 'var(--green)' : (d.bull_bear === 'bear' ? 'var(--red)' : 'var(--muted)');
+  }
+  if (d.sentiment !== undefined) {
+    const s = d.sentiment;
+    const sl = s > 75 ? 'Extreme Greed 😏' : s > 55 ? 'Greed 😌' : s < 25 ? 'Extreme Fear 😱' : s < 45 ? 'Fear 😰' : 'Neutral 😐';
+    document.getElementById('sentiment-badge').textContent = `${sl} (${s})`;
+  }
+  // News ticker
+  if (d.news && d.news.length) {
+    const ticker = document.getElementById('news-ticker');
+    const latest = d.news[d.news.length - 1];
+    ticker.textContent = latest.headline;
+    ticker.style.display = 'block';
+    ticker.style.color = latest.positive ? 'var(--green)' : 'var(--red)';
+  }
   document.getElementById('range-marker').style.left = ((price - 5) / 495 * 100) + '%';
   document.getElementById('range-label').textContent = fmt(price);
   const low = Math.min(...history), high = Math.max(...history), tc = price - history[0];
@@ -672,7 +728,16 @@ async function fetchMe() {
     <div class="trade-btns">
       <button class="btn btn-buy" style="flex:1" onclick="trade('buy')">📈 Buy</button>
       <button class="btn btn-sell" style="flex:1" onclick="trade('sell')">📉 Sell</button>
-    </div>`;
+    </div>
+    ${u.short ? `<div style="margin-top:10px;background:#ed424518;border:1px solid #ed424540;border-radius:8px;padding:10px 12px;font-size:13px">
+      <div style="font-weight:700;color:var(--red);margin-bottom:4px">📉 Short Position Open</div>
+      <div style="color:var(--muted)">${u.short.shares} shares shorted @ ${fmt(u.short.entry_price)}</div>
+      <div style="${u.short_pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">P&L: ${u.short_pnl >= 0 ? '+' : ''}${fmt(u.short_pnl)}</div>
+    </div>` : ''}
+    ${u.limit_orders && u.limit_orders.length ? `<div style="margin-top:10px;font-size:12px;color:var(--muted)">
+      <div style="font-weight:700;margin-bottom:4px">⏳ Limit Orders</div>
+      ${u.limit_orders.map(o => `<div>${o.type === 'buy' ? '🟢 Buy' : '🔴 Sell'} ${o.shares} @ ${fmt(o.price)}</div>`).join('')}
+    </div>` : ''}`;
 }
 
 async function trade(action) {

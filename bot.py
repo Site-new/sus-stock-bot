@@ -9,7 +9,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from headlines import get_headline
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -30,6 +31,23 @@ STOCK_NAME = "SUS"
 MIN_PRICE = 5.0
 MAX_PRICE = 500.0
 BASE_PRICE = 50.0
+
+CST = timezone(timedelta(hours=-6))
+
+def is_market_open():
+    """Open 12pm–12am CST."""
+    return datetime.now(CST).hour >= 12
+
+def add_news_event(data, headline, positive, price_impact_pct):
+    """Append an event to the news feed stored in data.json."""
+    events = data.get("news_feed", [])
+    events.append({
+        "headline": headline,
+        "positive": positive,
+        "impact": round(price_impact_pct, 2),
+        "ts": int(time.time()),
+    })
+    data["news_feed"] = events[-50:]  # keep last 50
 
 # Webhook message IDs — loaded from disk so restarts keep editing the same messages
 chart_webhook = None
@@ -273,6 +291,10 @@ async def on_ready():
     bot.loop.create_task(startup_messages())
     fluctuate_price.start()
     update_price_target.start()
+    earnings_report.start()
+    pay_dividends.start()
+    update_bull_bear.start()
+    insider_tip.start()
 
 
 @bot.event
@@ -441,6 +463,118 @@ async def slash_networth(interaction: discord.Interaction, user: discord.Member 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
+@bot.tree.command(name="short", description="Short sell SUS stock (profit if price drops)")
+async def slash_short(interaction: discord.Interaction, shares: int):
+    if interaction.channel.name != ALLOWED_CHANNEL:
+        await interaction.response.send_message("❌ Use this in **#sus-stock**.", ephemeral=True)
+        return
+    if shares <= 0:
+        await interaction.response.send_message("Enter a positive number of shares.", ephemeral=True)
+        return
+    data = load_data()
+    uid = str(interaction.user.id)
+    if uid in data.get("shorts", {}):
+        await interaction.response.send_message("❌ You already have an open short. Use `/cover` first.", ephemeral=True)
+        return
+    price = data["stock_price"]
+    get_user(data, uid)
+    data.setdefault("shorts", {})[uid] = {"shares": shares, "entry_price": price}
+    save_data(data)
+    embed = discord.Embed(title="📉 Short Position Opened", color=0xED4245)
+    embed.add_field(name="Shorted", value=f"{shares} SUS @ {format_price(price)}", inline=True)
+    embed.add_field(name="Profit if price drops to", value=format_price(price * 0.8), inline=True)
+    embed.set_footer(text="Use /cover to close your short position.")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="cover", description="Close your short position")
+async def slash_cover(interaction: discord.Interaction):
+    if interaction.channel.name != ALLOWED_CHANNEL:
+        await interaction.response.send_message("❌ Use this in **#sus-stock**.", ephemeral=True)
+        return
+    data = load_data()
+    uid = str(interaction.user.id)
+    shorts = data.get("shorts", {})
+    if uid not in shorts:
+        await interaction.response.send_message("❌ You don't have an open short position.", ephemeral=True)
+        return
+    short = shorts.pop(uid)
+    price = data["stock_price"]
+    pnl = round((short["entry_price"] - price) * short["shares"], 2)
+    u = get_user(data, uid)
+    u["balance"] = round(max(0, u["balance"] + pnl), 2)
+    data["shorts"] = shorts
+    save_data(data)
+    color = 0x57F287 if pnl >= 0 else 0xED4245
+    embed = discord.Embed(title="✅ Short Covered", color=color)
+    embed.add_field(name="Entry", value=format_price(short["entry_price"]), inline=True)
+    embed.add_field(name="Exit", value=format_price(price), inline=True)
+    pnl_str = f"{'+' if pnl >= 0 else ''}{format_price(pnl)}"
+    embed.add_field(name="P&L", value=pnl_str, inline=True)
+    embed.add_field(name="New Balance", value=format_price(u["balance"]), inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="limitbuy", description="Auto-buy when price drops to your target")
+async def slash_limitbuy(interaction: discord.Interaction, shares: int, price: float):
+    if interaction.channel.name != ALLOWED_CHANNEL:
+        await interaction.response.send_message("❌ Use this in **#sus-stock**.", ephemeral=True)
+        return
+    data = load_data()
+    u = get_user(data, interaction.user.id)
+    cost = round(shares * price, 2)
+    if u["balance"] < cost:
+        await interaction.response.send_message(f"❌ Not enough cash. Need {format_price(cost)}.", ephemeral=True)
+        return
+    u["balance"] = round(u["balance"] - cost, 2)  # reserve funds
+    data.setdefault("limit_orders", []).append({
+        "user_id": str(interaction.user.id), "type": "buy", "shares": shares, "price": round(price, 2)
+    })
+    save_data(data)
+    embed = discord.Embed(title="✅ Limit Buy Set", color=0x57F287)
+    embed.add_field(name="Buy", value=f"{shares} SUS if price ≤ {format_price(price)}", inline=False)
+    embed.add_field(name="Funds Reserved", value=format_price(cost), inline=True)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="limitsell", description="Auto-sell when price rises to your target")
+async def slash_limitsell(interaction: discord.Interaction, shares: int, price: float):
+    if interaction.channel.name != ALLOWED_CHANNEL:
+        await interaction.response.send_message("❌ Use this in **#sus-stock**.", ephemeral=True)
+        return
+    data = load_data()
+    u = get_user(data, interaction.user.id)
+    if u["shares"] < shares:
+        await interaction.response.send_message(f"❌ You only have {u['shares']} shares.", ephemeral=True)
+        return
+    u["shares"] -= shares  # reserve shares
+    data.setdefault("limit_orders", []).append({
+        "user_id": str(interaction.user.id), "type": "sell", "shares": shares, "price": round(price, 2)
+    })
+    save_data(data)
+    embed = discord.Embed(title="✅ Limit Sell Set", color=0x57F287)
+    embed.add_field(name="Sell", value=f"{shares} SUS if price ≥ {format_price(price)}", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="market", description="Check market status, sentiment, and cycle")
+async def slash_market(interaction: discord.Interaction):
+    if interaction.channel.name != ALLOWED_CHANNEL:
+        await interaction.response.send_message("❌ Use this in **#sus-stock**.", ephemeral=True)
+        return
+    data = load_data()
+    open_status = "🟢 OPEN" if is_market_open() else "🔴 CLOSED (opens 12pm CST)"
+    cycle = data.get("bull_bear", "neutral")
+    cycle_label = "🐂 Bull" if cycle == "bull" else ("🐻 Bear" if cycle == "bear" else "😐 Neutral")
+    sentiment = data.get("sentiment", 50)
+    sentiment_label = "Extreme Greed 😏" if sentiment > 75 else ("Greed 😌" if sentiment > 55 else ("Fear 😰" if sentiment < 25 else ("Neutral 😐" if sentiment < 45 else "Caution ⚠️")))
+    embed = discord.Embed(title="📊 Market Status", color=0x5865F2)
+    embed.add_field(name="Status", value=open_status, inline=True)
+    embed.add_field(name="Cycle", value=cycle_label, inline=True)
+    embed.add_field(name="Sentiment", value=f"{sentiment}/100 — {sentiment_label}", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 async def post_chart():
     global _msg_ids
     if chart_webhook is None:
@@ -554,15 +688,51 @@ async def before_target():
 @tasks.loop(seconds=30)
 async def fluctuate_price():
     try:
+        if not is_market_open():
+            return
+
         data = load_data()
         price = data["stock_price"]
         target = data.get("price_target", random.uniform(MIN_PRICE, MAX_PRICE))
-        change_pct = random.uniform(-0.06, 0.06)
-        # Stronger pull toward the hourly target instead of always reverting to 50
+
+        # Bull/Bear cycle bias
+        cycle = data.get("bull_bear", "neutral")
+        bias = 0.025 if cycle == "bull" else (-0.025 if cycle == "bear" else 0)
+
+        # Fear/Greed sentiment (0=fear, 100=greed) affects volatility
+        sentiment = data.get("sentiment", 50)
+        volatility = 0.03 + (abs(sentiment - 50) / 50) * 0.05  # 3%-8%
+
+        # Flash crash: 0.8% chance per tick
+        flash_crash = False
+        if random.random() < 0.008:
+            flash_crash = True
+            crash_pct = random.uniform(-0.45, -0.30)
+            change_pct = crash_pct
+            headline = "⚡ FLASH CRASH: Sus Corp Plummets in Seconds!"
+            add_news_event(data, headline, False, crash_pct * 100)
+            print(f"[flash_crash] {crash_pct:.1%}")
+        else:
+            change_pct = random.uniform(-volatility, volatility) + bias
+
         reversion = (target - price) * 0.04
         new_price = round(max(MIN_PRICE, min(MAX_PRICE, price * (1 + change_pct) + reversion)), 2)
         if new_price == price:
             return
+
+        # Stock split: if price >= 400, split 2-for-1
+        if new_price >= 400:
+            new_price = round(new_price / 2, 2)
+            for uid, u in data["users"].items():
+                u["shares"] *= 2
+                # Also double short positions
+                if "shorts" in data and uid in data["shorts"]:
+                    data["shorts"][uid]["shares"] *= 2
+                    data["shorts"][uid]["entry_price"] /= 2
+            headline = f"📊 Sus Corp Stock Split 2-for-1 at ${new_price*2:.2f}! All shares doubled."
+            add_news_event(data, headline, True, 0)
+            print(f"[split] 2-for-1 at ${new_price*2:.2f}")
+
         data["stock_price"] = new_price
         history = data.get("price_history", [])
         history.append(new_price)
@@ -570,10 +740,44 @@ async def fluctuate_price():
             history = history[-200:]
         data["price_history"] = history
         timestamps = data.get("price_timestamps", [])
-        timestamps.append(datetime.now().strftime("%H:%M"))
+        timestamps.append(datetime.now(CST).strftime("%H:%M"))
         if len(timestamps) > 200:
             timestamps = timestamps[-200:]
         data["price_timestamps"] = timestamps
+
+        # Check limit orders
+        remaining_orders = []
+        for order in data.get("limit_orders", []):
+            uid = order["user_id"]
+            u = data["users"].get(uid, {"balance": 0, "shares": 0})
+            executed = False
+            if order["type"] == "buy" and new_price <= order["price"]:
+                cost = round(new_price * order["shares"], 2)
+                if u["balance"] >= cost:
+                    u["balance"] = round(u["balance"] - cost, 2)
+                    u["shares"] += order["shares"]
+                    executed = True
+                    print(f"[limit] buy {order['shares']} for {uid} at {new_price}")
+            elif order["type"] == "sell" and new_price >= order["price"]:
+                if u["shares"] >= order["shares"]:
+                    u["shares"] -= order["shares"]
+                    u["balance"] = round(u["balance"] + new_price * order["shares"], 2)
+                    executed = True
+                    print(f"[limit] sell {order['shares']} for {uid} at {new_price}")
+            if not executed:
+                remaining_orders.append(order)
+        data["limit_orders"] = remaining_orders
+
+        # Auto margin call: cover shorts where loss > 150% of entry value
+        for uid, short in list(data.get("shorts", {}).items()):
+            loss = (new_price - short["entry_price"]) * short["shares"]
+            max_loss = short["entry_price"] * short["shares"] * 1.5
+            if loss >= max_loss:
+                u = data["users"].get(uid, {"balance": 0, "shares": 0})
+                u["balance"] = round(max(0, u["balance"] - loss), 2)
+                del data["shorts"][uid]
+                print(f"[margin_call] {uid} auto-covered at {new_price}")
+
         save_data(data)
     except Exception as e:
         print(f"[fluctuate_price] data error: {e}")
@@ -598,6 +802,117 @@ async def fluctuate_price_error(error):
 
 @fluctuate_price.before_loop
 async def before_fluctuate():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=4)
+async def earnings_report():
+    """Post a random earnings report causing a price spike or drop."""
+    if not is_market_open():
+        return
+    data = load_data()
+    positive = random.random() > 0.45
+    impact_pct = random.uniform(0.08, 0.25) if positive else random.uniform(-0.22, -0.08)
+    headline = get_headline(positive)
+    price = data["stock_price"]
+    new_price = round(max(MIN_PRICE, min(MAX_PRICE, price * (1 + impact_pct))), 2)
+    data["stock_price"] = new_price
+    history = data.get("price_history", [])
+    history.append(new_price)
+    data["price_history"] = history[-200:]
+    timestamps = data.get("price_timestamps", [])
+    timestamps.append(datetime.now(CST).strftime("%H:%M"))
+    data["price_timestamps"] = timestamps[-200:]
+    add_news_event(data, f"📰 EARNINGS: {headline}", positive, impact_pct * 100)
+    save_data(data)
+    print(f"[earnings] {'📈' if positive else '📉'} {impact_pct:.1%} — {headline}")
+    try:
+        await post_chart()
+        await post_leaderboard()
+    except Exception:
+        pass
+
+
+@earnings_report.before_loop
+async def before_earnings():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=6)
+async def pay_dividends():
+    """Pay $0.50 per share to all shareholders."""
+    data = load_data()
+    total_paid = 0
+    recipients = 0
+    for uid, u in data["users"].items():
+        if u["shares"] > 0:
+            payout = round(u["shares"] * 0.50, 2)
+            u["balance"] = round(u["balance"] + payout, 2)
+            total_paid += payout
+            recipients += 1
+    if recipients > 0:
+        add_news_event(data, f"💵 Dividend payout: $0.50/share paid to {recipients} shareholders (${total_paid:.2f} total)", True, 0)
+        save_data(data)
+        print(f"[dividends] Paid ${total_paid:.2f} to {recipients} users")
+
+
+@pay_dividends.before_loop
+async def before_dividends():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=1)
+async def update_bull_bear():
+    """Randomly shift the market into bull, bear, or neutral cycle."""
+    data = load_data()
+    expires = data.get("bull_bear_expires", 0)
+    if time.time() < expires:
+        return
+    cycle = random.choices(["bull", "bear", "neutral"], weights=[35, 35, 30])[0]
+    duration_hours = random.randint(8, 36)
+    data["bull_bear"] = cycle
+    data["bull_bear_expires"] = time.time() + duration_hours * 3600
+    # Adjust sentiment
+    data["sentiment"] = random.randint(65, 90) if cycle == "bull" else (random.randint(10, 35) if cycle == "bear" else random.randint(40, 60))
+    label = "🐂 Bull Market" if cycle == "bull" else ("🐻 Bear Market" if cycle == "bear" else "😐 Neutral Market")
+    add_news_event(data, f"📊 Market Cycle Shift: {label} expected for next {duration_hours}h", cycle == "bull", 0)
+    save_data(data)
+    print(f"[bull_bear] {cycle} for {duration_hours}h")
+
+
+@update_bull_bear.before_loop
+async def before_bull_bear():
+    await bot.wait_until_ready()
+
+
+@tasks.loop(hours=3)
+async def insider_tip():
+    """DM a random shareholder a hint about the next price direction."""
+    data = load_data()
+    if not is_market_open():
+        return
+    shareholders = [(uid, u) for uid, u in data["users"].items() if u["shares"] > 0]
+    if not shareholders:
+        return
+    uid, _ = random.choice(shareholders)
+    cycle = data.get("bull_bear", "neutral")
+    target = data.get("price_target", 50)
+    price = data["stock_price"]
+    going_up = target > price or cycle == "bull"
+    hint = (
+        f"🔍 **Insider Tip:** My sources say Sus Corp is looking {'strong' if going_up else 'shaky'} right now. "
+        f"{'Might be a good time to load up...' if going_up else 'You might want to be careful with your position...'} 🤫"
+    )
+    try:
+        user = await bot.fetch_user(int(uid))
+        await user.send(hint)
+        print(f"[insider_tip] Sent to {user.name}")
+    except Exception as e:
+        print(f"[insider_tip] Failed: {e}")
+
+
+@insider_tip.before_loop
+async def before_insider():
     await bot.wait_until_ready()
 
 

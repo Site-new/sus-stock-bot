@@ -1061,7 +1061,7 @@ DASHBOARD_HTML = """
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
-  <a href="/companies" style="color:var(--muted);text-decoration:none;font-size:13px;font-weight:700;margin-left:8px">🏢 Companies</a>
+  <button onclick="toggleCompanies()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🏢 Companies</button>
   <div class="auth-area" id="auth-area">
     <a href="/login" class="btn btn-discord">
       <svg width="16" height="12" viewBox="0 0 71 55" fill="white"><path d="M60.1 4.9A58.6 58.6 0 0 0 45.6.4a.2.2 0 0 0-.2.1 40.8 40.8 0 0 0-1.8 3.7 54.1 54.1 0 0 0-16.2 0 37.6 37.6 0 0 0-1.8-3.7.22.22 0 0 0-.2-.1A58.4 58.4 0 0 0 10.9 4.9a.2.2 0 0 0-.1.1C1.6 18.1-.9 31 .3 43.7a.24.24 0 0 0 .1.2 58.9 58.9 0 0 0 17.7 8.9.22.22 0 0 0 .2-.1 42 42 0 0 0 3.6-5.9.21.21 0 0 0-.1-.3 38.7 38.7 0 0 1-5.5-2.6.22.22 0 0 1 0-.4c.4-.3.7-.5 1.1-.8a.21.21 0 0 1 .2 0c11.5 5.3 24 5.3 35.4 0a.21.21 0 0 1 .2 0l1.1.8a.22.22 0 0 1 0 .4 36.3 36.3 0 0 1-5.5 2.6.22.22 0 0 0-.1.3 47.1 47.1 0 0 0 3.6 5.9.21.21 0 0 0 .2.1 58.7 58.7 0 0 0 17.7-8.9.23.23 0 0 0 .1-.2c1.5-15.1-2.4-28-10.4-39.5a.18.18 0 0 0-.1-.2zM23.7 36c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2zm23.6 0c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2z"/></svg>
@@ -1171,6 +1171,42 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Companies drawer -->
+<div id="companies-overlay" onclick="toggleCompanies()" style="position:fixed;inset:0;background:#0006;z-index:90;display:none;opacity:0;transition:opacity .3s"></div>
+<div id="companies-drawer" style="position:fixed;top:0;right:-520px;width:min(520px,100vw);height:100vh;background:var(--surface);border-left:1px solid var(--border);z-index:91;transition:right .3s ease;overflow-y:auto;display:flex;flex-direction:column">
+  <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;position:sticky;top:0;background:var(--surface);z-index:1">
+    <span style="font-size:18px">🏢</span>
+    <span style="font-size:15px;font-weight:700">Companies</span>
+    <button onclick="showCreateDrawer()" class="btn btn-discord" style="margin-left:auto;font-size:12px;padding:5px 12px">+ Found ($2,000)</button>
+    <button onclick="toggleCompanies()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1">✕</button>
+  </div>
+  <div id="drawer-companies-list" style="padding:14px;flex:1">Loading...</div>
+</div>
+
+<!-- Company detail (slides over drawer) -->
+<div id="company-detail-panel" style="position:fixed;top:0;right:-520px;width:min(520px,100vw);height:100vh;background:var(--surface2);border-left:1px solid var(--border);z-index:92;transition:right .3s ease;overflow-y:auto">
+  <div id="company-detail-inner" style="padding:20px"></div>
+</div>
+
+<!-- Create company modal -->
+<div id="create-company-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:26px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <span style="font-size:17px;font-weight:700">🏢 Found a Company</span>
+      <button onclick="hideCreateDrawer()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <input id="dc-name" class="trade-input" placeholder="Company name"/>
+    <input id="dc-ticker" class="trade-input" placeholder="Ticker (2-4 letters)" maxlength="4" style="text-transform:uppercase"/>
+    <textarea id="dc-desc" class="trade-input" placeholder="Description (optional)" rows="2" style="resize:none"></textarea>
+    <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Choose Type</div>
+    <div id="dc-type-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:12px"></div>
+    <input type="hidden" id="dc-type"/>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-discord" style="flex:1" onclick="submitCreateDrawer()">Found — $2,000</button>
+      <button class="btn btn-logout" onclick="hideCreateDrawer()">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -1532,6 +1568,226 @@ fetchStock(); fetchLeaderboard();
 fetchMe().then(() => initChat()).catch(() => initChat());
 setInterval(fetchStock, 10000);
 setInterval(fetchMe, 15000);
+
+// ── Companies drawer ───────────────────────────────────────────────────────────
+const COMPANY_TYPES_MAP = ${json.dumps({k: {"name": v["name"], "emoji": v["emoji"], "desc": v["desc"]} for k, v in COMPANY_TYPES.items()})};
+let companiesOpen = false;
+let detailOpen = false;
+let dcSelectedType = null;
+let drawerCompanies = [];
+
+function toggleCompanies() {
+  companiesOpen = !companiesOpen;
+  const drawer = document.getElementById('companies-drawer');
+  const overlay = document.getElementById('companies-overlay');
+  drawer.style.right = companiesOpen ? '0' : '-520px';
+  overlay.style.display = companiesOpen ? 'block' : 'none';
+  setTimeout(() => { overlay.style.opacity = companiesOpen ? '1' : '0'; }, 10);
+  if (companiesOpen) { loadDrawerCompanies(); closeDetail(); }
+}
+
+function closeDetail() {
+  detailOpen = false;
+  document.getElementById('company-detail-panel').style.right = '-520px';
+}
+
+async function loadDrawerCompanies() {
+  drawerCompanies = await fetch('/api/companies').then(r => r.json()).catch(() => []);
+  const el = document.getElementById('drawer-companies-list');
+  if (!drawerCompanies.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px 0">No companies yet. Be the first!</div>';
+    return;
+  }
+  el.innerHTML = drawerCompanies.map(c => {
+    const t = COMPANY_TYPES_MAP[c.type] || {name:c.type, emoji:'🏢'};
+    return `<div onclick="openDrawerCompany('${c.id}')" style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;transition:border-color .2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:22px">${t.emoji}</span>
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:14px">${c.name}</div>
+          <div style="font-size:11px;color:var(--accent);font-weight:700">${c.ticker} · ${t.name}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:16px;font-weight:800">${fmt(c.stock_price)}</div>
+          <div style="font-size:10px;color:var(--muted)">per share</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;font-size:12px;color:var(--muted)">
+        <span>Treasury: <b style="color:var(--text)">${fmt(c.treasury)}</b></span>
+        <span>Value: <b style="color:var(--text)">${fmt(c.value)}</b></span>
+        <span>Members: <b style="color:var(--text)">${c.member_count}</b></span>
+      </div>
+      ${c.description ? `<div style="font-size:11px;color:var(--muted);margin-top:6px">${c.description}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function openDrawerCompany(cid) {
+  const c = await fetch('/api/companies/' + cid).then(r => r.json());
+  const t = COMPANY_TYPES_MAP[c.type] || {name:c.type, emoji:'🏢'};
+  const isMember = c._is_member;
+  const isCeo = c._is_ceo;
+
+  document.getElementById('company-detail-inner').innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+      <button onclick="closeDetail()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer">←</button>
+      <span style="font-size:22px">${t.emoji}</span>
+      <div>
+        <div style="font-size:17px;font-weight:700">${c.name}</div>
+        <div style="font-size:11px;color:var(--accent);font-weight:700">${c.ticker} · ${t.name}</div>
+      </div>
+    </div>
+    ${c.description ? `<div style="font-size:12px;color:var(--muted);margin-bottom:14px">${c.description}</div>` : ''}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
+      ${[['Stock Price', fmt(c._stock_price)], ['Company Value', fmt(c._value)], ['Treasury', fmt(c.treasury)], ['Your Shares', c._my_shares || 0]].map(([l,v]) =>
+        `<div style="background:var(--surface);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">${l}</div><div style="font-size:16px;font-weight:700">${v}</div></div>`
+      ).join('')}
+    </div>
+
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Company Stock</div>
+      <div style="display:flex;gap:6px">
+        <input type="number" id="d-stock-shares" class="trade-input" placeholder="Shares" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-buy" onclick="dBuyStock('${cid}')">Buy</button>
+        <button class="btn btn-sell" onclick="dSellStock('${cid}')">Sell</button>
+      </div>
+    </div>
+
+    ${isMember ? `
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Treasury</div>
+      <div style="display:flex;gap:6px">
+        <input type="number" id="d-dep-amount" class="trade-input" placeholder="Amount" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-buy" onclick="dDeposit('${cid}')">Deposit</button>
+        <button class="btn btn-sell" onclick="dWithdraw('${cid}')">Withdraw</button>
+      </div>
+    </div>` : `<button class="btn btn-discord" style="width:100%;margin-bottom:12px" onclick="dJoin('${cid}')">Join Company</button>`}
+
+    ${isCeo ? `
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">CEO — Trade SUS (holds ${c.sus_shares||0} shares)</div>
+      <div style="display:flex;gap:6px">
+        <input type="number" id="d-sus-shares" class="trade-input" placeholder="SUS shares" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-buy" onclick="dTradeSus('${cid}','buy')">Buy SUS</button>
+        <button class="btn btn-sell" onclick="dTradeSus('${cid}','sell')">Sell SUS</button>
+      </div>
+    </div>` : ''}
+
+    ${buildDrawerTypePanel(c, isMember, isCeo)}
+  `;
+
+  detailOpen = true;
+  document.getElementById('company-detail-panel').style.right = '0';
+}
+
+function buildDrawerTypePanel(c, isMember, isCeo) {
+  const cid = c.id;
+  switch(c.type) {
+    case 'lending_bank': return `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Loans (20% interest)</div>
+      ${c._my_loan ? `<div style="color:var(--red);margin-bottom:6px;font-size:13px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-sell" style="width:100%" onclick="dRepayLoan('${cid}')">Repay Loan</button>`
+      : `<input type="number" id="d-loan-amt" class="trade-input" placeholder="Loan amount"/><button class="btn btn-discord" style="width:100%" onclick="dRequestLoan('${cid}')">Request Loan</button>`}
+    </div>`;
+    case 'savings': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🐷 Savings — 3% per 20min</div>
+      <div style="font-size:13px;color:var(--green)">Your deposit: ${fmt(c._my_deposit||0)}</div>
+      <div style="font-size:11px;color:var(--muted)">Deposit to treasury to earn interest automatically.</div>
+    </div>`;
+    case 'insurance': return `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Insurance</div>
+      ${c._my_policy ? `<div style="color:var(--green);font-size:13px">Covered: ${fmt(c._my_policy.coverage)}</div>`
+      : `<input type="number" id="d-premium" class="trade-input" placeholder="Premium ($50 min)" value="50"/><button class="btn btn-discord" style="width:100%" onclick="dBuyInsurance('${cid}')">Buy Coverage</button>`}
+    </div>`;
+    case 'bounty_hunter': return `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Post Bounty (30% to company)</div>
+      <input id="d-bounty-target" class="trade-input" placeholder="Target User ID"/>
+      <input type="number" id="d-bounty-amt" class="trade-input" placeholder="Bounty amount"/>
+      <button class="btn btn-sell" style="width:100%" onclick="dPostBounty('${cid}')">Post Bounty</button>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Active: ${(c.bounties||[]).length} bounties</div>
+    </div>`;
+    case 'market_maker': return `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Market Maker · Buy@${fmt(c.spread_sell||0)} Sell@${fmt(c.spread_buy||0)}</div>
+      ${isCeo ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px"><input type="number" id="d-spread-buy" class="trade-input" placeholder="Buy price" style="margin-bottom:0"/><input type="number" id="d-spread-sell" class="trade-input" placeholder="Sell price" style="margin-bottom:0"/></div><button class="btn btn-discord" style="width:100%;margin-bottom:8px" onclick="dSetSpread('${cid}')">Set Spread</button>` : ''}
+      <div style="display:flex;gap:6px">
+        <input type="number" id="d-mm-shares" class="trade-input" placeholder="Shares" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-buy" onclick="dMmTrade('${cid}','buy')">Buy</button>
+        <button class="btn btn-sell" onclick="dMmTrade('${cid}','sell')">Sell</button>
+      </div>
+    </div>`;
+    case 'day_trading': case 'pump_dump': case 'wolf_pack': {
+      const vote = c.vote || {};
+      return `<div style="margin-bottom:12px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Vote</div>
+        <div style="display:flex;gap:6px">
+          ${['buy','sell','hold'].map(v => `<button class="btn ${v==='buy'?'btn-buy':v==='sell'?'btn-sell':'btn-logout'}" style="flex:1" onclick="dCastVote('${cid}','${v}')">${v.toUpperCase()} (${(vote[v]||[]).length})</button>`).join('')}
+        </div>
+      </div>`;
+    }
+    case 'sus_mafia': return `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🤌 Pay Protection</div>
+      <input type="number" id="d-prot-amt" class="trade-input" placeholder="Amount" value="100"/>
+      <button class="btn btn-sell" style="width:100%" onclick="dPayProtection('${cid}')">Pay Protection</button>
+    </div>`;
+    case 'insider_ring': return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🔍 Insider Ring</div>
+      <div style="font-size:12px;color:${isMember?'var(--green)':'var(--muted)'}">${isMember?'You receive market news early.':'Join to access early news.'}</div>
+    </div>`;
+    default: return '';
+  }
+}
+
+// Drawer company action helpers
+async function dAction(url, body, successMsg, cid) {
+  const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return false; }
+  showToast(successMsg); openDrawerCompany(cid); loadDrawerCompanies(); return true;
+}
+async function dJoin(cid) { await dAction(`/api/companies/${cid}/join`, {}, 'Joined!', cid); }
+async function dBuyStock(cid) { const s=parseInt(document.getElementById('d-stock-shares')?.value); if(!s){showToast('Enter shares',false);return;} await dAction(`/api/companies/${cid}/buy_stock`,{shares:s},`Bought ${s} shares`,cid); }
+async function dSellStock(cid) { const s=parseInt(document.getElementById('d-stock-shares')?.value); if(!s){showToast('Enter shares',false);return;} await dAction(`/api/companies/${cid}/sell_stock`,{shares:s},'Sold shares',cid); }
+async function dDeposit(cid) { const a=parseFloat(document.getElementById('d-dep-amount')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/deposit`,{amount:a},`Deposited ${fmt(a)}`,cid); }
+async function dWithdraw(cid) { const a=parseFloat(document.getElementById('d-dep-amount')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/withdraw`,{amount:a},`Withdrew ${fmt(a)}`,cid); }
+async function dTradeSus(cid,action) { const s=parseInt(document.getElementById('d-sus-shares')?.value); if(!s){showToast('Enter shares',false);return;} await dAction(`/api/companies/${cid}/trade_sus`,{action,shares:s},`${action==='buy'?'Bought':'Sold'} ${s} SUS`,cid); }
+async function dCastVote(cid,vote) { await dAction(`/api/companies/${cid}/vote`,{vote},`Voted ${vote.toUpperCase()}`,cid); }
+async function dRequestLoan(cid) { const a=parseFloat(document.getElementById('d-loan-amt')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/loan`,{amount:a},`Loan received`,cid); }
+async function dRepayLoan(cid) { await dAction(`/api/companies/${cid}/repay`,{},'Loan repaid!',cid); }
+async function dBuyInsurance(cid) { const p=parseFloat(document.getElementById('d-premium')?.value||50); await dAction(`/api/companies/${cid}/insure`,{premium:p},'Insured!',cid); }
+async function dPostBounty(cid) { const t=document.getElementById('d-bounty-target')?.value,a=parseFloat(document.getElementById('d-bounty-amt')?.value); await dAction(`/api/companies/${cid}/bounty`,{target_id:t,amount:a},'Bounty posted!',cid); }
+async function dSetSpread(cid) { const b=parseFloat(document.getElementById('d-spread-buy')?.value),s=parseFloat(document.getElementById('d-spread-sell')?.value); await dAction(`/api/companies/${cid}/set_spread`,{buy:b,sell:s},'Spread set!',cid); }
+async function dMmTrade(cid,action) { const s=parseInt(document.getElementById('d-mm-shares')?.value); if(!s){showToast('Enter shares',false);return;} await dAction(`/api/companies/${cid}/market_trade`,{action,shares:s},'Trade executed',cid); }
+async function dPayProtection(cid) { const a=parseFloat(document.getElementById('d-prot-amt')?.value||100); await dAction(`/api/companies/${cid}/pay_protection`,{amount:a},'Protection paid.',cid); }
+
+// Create company
+function showCreateDrawer() {
+  if (!myUserId) { showToast('Login first', false); return; }
+  const grid = document.getElementById('dc-type-grid');
+  grid.innerHTML = Object.entries(COMPANY_TYPES_MAP).map(([k,v]) =>
+    `<div onclick="selectDcType('${k}',this)" style="background:var(--surface2);border:2px solid var(--border);border-radius:8px;padding:8px;cursor:pointer;text-align:center">
+      <div style="font-size:20px">${v.emoji}</div>
+      <div style="font-size:11px;font-weight:700;margin-top:3px">${v.name}</div>
+      <div style="font-size:9px;color:var(--muted);margin-top:2px">${v.desc}</div>
+    </div>`).join('');
+  document.getElementById('create-company-modal').style.display = 'flex';
+}
+function hideCreateDrawer() { document.getElementById('create-company-modal').style.display = 'none'; }
+function selectDcType(type, el) {
+  document.querySelectorAll('#dc-type-grid > div').forEach(e => e.style.borderColor='var(--border)');
+  el.style.borderColor = 'var(--accent)';
+  document.getElementById('dc-type').value = type; dcSelectedType = type;
+}
+async function submitCreateDrawer() {
+  const name=document.getElementById('dc-name').value.trim();
+  const ticker=document.getElementById('dc-ticker').value.trim().toUpperCase();
+  const desc=document.getElementById('dc-desc').value.trim();
+  const type=document.getElementById('dc-type').value;
+  if(!name||!ticker||!type){showToast('Fill all fields and pick a type',false);return;}
+  const res=await fetch('/api/companies/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,ticker,description:desc,type})});
+  const d=await res.json();
+  if(!res.ok){showToast(d.error,false);return;}
+  showToast(`${name} founded!`); hideCreateDrawer(); loadDrawerCompanies();
+}
 setInterval(fetchLeaderboard, 15000);
 
 // ── Admin panel ────────────────────────────────────────────────────────────────

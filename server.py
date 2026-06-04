@@ -871,9 +871,13 @@ async function fetchMe() {
           </div>`).join('') : '<div style="color:var(--muted)">No active limit orders.</div>'}
       </div>
     </div>`;
+  // Restore the previously active tab after re-render
+  setTab(activeTab);
 }
 
+let activeTab = 'buy';
 function setTab(tab) {
+  activeTab = tab;
   ['buy','sell','short','limits'].forEach(t => {
     const el = document.getElementById('tab-'+t+'-content');
     const btn = document.getElementById('tab-'+t);

@@ -537,27 +537,45 @@ async def post_portfolio():
 
 @tasks.loop(seconds=30)
 async def fluctuate_price():
-    data = load_data()
-    price = data["stock_price"]
-    change_pct = random.uniform(-0.06, 0.06)
-    reversion = (BASE_PRICE - price) * 0.02
-    new_price = round(max(MIN_PRICE, min(MAX_PRICE, price * (1 + change_pct) + reversion)), 2)
-    if new_price == price:
+    try:
+        data = load_data()
+        price = data["stock_price"]
+        change_pct = random.uniform(-0.06, 0.06)
+        reversion = (BASE_PRICE - price) * 0.02
+        new_price = round(max(MIN_PRICE, min(MAX_PRICE, price * (1 + change_pct) + reversion)), 2)
+        if new_price == price:
+            return
+        data["stock_price"] = new_price
+        history = data.get("price_history", [])
+        history.append(new_price)
+        if len(history) > 200:
+            history = history[-200:]
+        data["price_history"] = history
+        timestamps = data.get("price_timestamps", [])
+        timestamps.append(datetime.now().strftime("%H:%M"))
+        if len(timestamps) > 200:
+            timestamps = timestamps[-200:]
+        data["price_timestamps"] = timestamps
+        save_data(data)
+    except Exception as e:
+        print(f"[fluctuate_price] data error: {e}")
         return
-    data["stock_price"] = new_price
-    history = data.get("price_history", [])
-    history.append(new_price)
-    if len(history) > 200:
-        history = history[-200:]
-    data["price_history"] = history
-    timestamps = data.get("price_timestamps", [])
-    timestamps.append(datetime.now().strftime("%H:%M"))
-    if len(timestamps) > 200:
-        timestamps = timestamps[-200:]
-    data["price_timestamps"] = timestamps
-    save_data(data)
-    await post_chart()
-    await post_leaderboard()
+
+    try:
+        await post_chart()
+    except Exception as e:
+        print(f"[fluctuate_price] chart error: {e}")
+
+    try:
+        await post_leaderboard()
+    except Exception as e:
+        print(f"[fluctuate_price] leaderboard error: {e}")
+
+
+@fluctuate_price.error
+async def fluctuate_price_error(error):
+    print(f"[fluctuate_price] task error: {error}")
+    fluctuate_price.restart()
 
 
 @fluctuate_price.before_loop

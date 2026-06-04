@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import json
 import os
 import random
+import time
 import io
 import matplotlib
 matplotlib.use("Agg")
@@ -279,24 +280,25 @@ async def on_message(message):
         await bot.process_commands(message)
         return
 
-    if message.channel.name == CHAT_CHANNEL:
+    if message.channel.name.lower() == CHAT_CHANNEL.lower():
         # Save channel ID so server.py can mirror web messages back here
         save_chat_meta({"discord_channel_id": str(message.channel.id)})
         # Bridge Discord message to website chat
-        messages = load_chat()
-        msg_id = (messages[-1]["id"] + 1) if messages else 1
-        import time
-        avatar_hash = str(message.author.avatar) if message.author.avatar else None
-        messages.append({
-            "id": msg_id,
-            "user_id": str(message.author.id),
-            "username": message.author.display_name,
-            "avatar": avatar_hash,
-            "text": message.content,
-            "ts": int(time.time()),
-            "source": "discord",
-        })
-        save_chat(messages)
+        if message.content.strip():
+            messages = load_chat()
+            msg_id = (messages[-1]["id"] + 1) if messages else 1
+            avatar_hash = str(message.author.avatar) if message.author.avatar else None
+            messages.append({
+                "id": msg_id,
+                "user_id": str(message.author.id),
+                "username": message.author.display_name,
+                "avatar": avatar_hash,
+                "text": message.content,
+                "ts": int(time.time()),
+                "source": "discord",
+            })
+            save_chat(messages)
+            print(f"[chat] Discord→Web: {message.author.display_name}: {message.content}")
         await bot.process_commands(message)
         return
 
@@ -561,6 +563,17 @@ async def fluctuate_price():
 @fluctuate_price.before_loop
 async def before_fluctuate():
     await bot.wait_until_ready()
+
+
+@bot.command(name="chattest")
+async def chattest_cmd(ctx):
+    """Shows what channel the bot thinks is the chat channel."""
+    found = discord.utils.get(ctx.guild.text_channels, name=CHAT_CHANNEL)
+    if found:
+        await ctx.send(f"✅ Chat channel found: **#{found.name}** (ID: `{found.id}`)")
+    else:
+        channels = [c.name for c in ctx.guild.text_channels]
+        await ctx.send(f"❌ No channel named `{CHAT_CHANNEL}` found.\nAvailable channels: {', '.join(channels)}")
 
 
 @bot.command(name="help")

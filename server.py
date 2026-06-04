@@ -14,9 +14,33 @@ DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI  = os.environ.get("DISCORD_REDIRECT_URI", "http://localhost:5000/callback")
 
+DISCORD_BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
 DISCORD_AUTH_URL  = "https://discord.com/oauth2/authorize"
 DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
 DISCORD_USER_URL  = "https://discord.com/api/users/@me"
+
+# In-memory username cache so we don't hammer Discord API
+_username_cache = {}
+
+def get_discord_username(user_id):
+    if user_id in _username_cache:
+        return _username_cache[user_id]
+    if not DISCORD_BOT_TOKEN:
+        return None
+    try:
+        res = requests.get(
+            f"https://discord.com/api/v10/users/{user_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            timeout=3,
+        )
+        if res.status_code == 200:
+            data = res.json()
+            name = data.get("global_name") or data.get("username") or None
+            _username_cache[user_id] = name
+            return name
+    except Exception:
+        pass
+    return None
 
 
 def load_data():
@@ -120,7 +144,8 @@ def api_leaderboard():
     for uid, u in data["users"].items():
         invested = round(u["shares"] * price, 2)
         net_worth = round(u["balance"] + invested, 2)
-        users.append({"id": uid, "shares": u["shares"], "cash": u["balance"],
+        username = get_discord_username(uid)
+        users.append({"id": uid, "username": username, "shares": u["shares"], "cash": u["balance"],
                       "invested": invested, "net_worth": net_worth,
                       "pnl": round(net_worth - STARTING_BALANCE, 2)})
     users.sort(key=lambda x: x["net_worth"], reverse=True)
@@ -459,7 +484,7 @@ async function fetchLeaderboard() {
     <div class="lb-row ${u.id === myUserId ? 'lb-me' : ''}">
       <div class="lb-rank">${medals[i] || '#'+(i+1)}</div>
       <div style="flex:1;min-width:0">
-        <div class="lb-name">${u.id === myUserId ? '⭐ You' : 'Trader #'+u.id.slice(-4)}</div>
+        <div class="lb-name">${u.id === myUserId ? '⭐ ' + (u.username || 'You') : (u.username || 'Trader #'+u.id.slice(-4))}</div>
         <div class="lb-pnl ${u.pnl>=0?'pos':'neg'}">${u.pnl>=0?'+':''}${fmt(u.pnl)} · ${u.shares} shares</div>
       </div>
       <div class="lb-worth">${fmt(u.net_worth)}</div>

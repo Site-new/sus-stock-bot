@@ -311,6 +311,106 @@ def api_sell():
     return jsonify({"ok": True, "sold": shares, "earnings": earnings, "balance": u["balance"], "shares": u["shares"]})
 
 
+@app.route("/api/short", methods=["POST"])
+def api_short():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    shares = int(request.json.get("shares", 0))
+    if shares <= 0:
+        return jsonify({"error": "invalid amount"}), 400
+    data = load_data()
+    uid = session["user_id"]
+    if uid in data.get("shorts", {}):
+        return jsonify({"error": "You already have an open short. Cover it first."}), 400
+    price = data["stock_price"]
+    get_user(data, uid)
+    data.setdefault("shorts", {})[uid] = {"shares": shares, "entry_price": price}
+    save_data(data)
+    return jsonify({"ok": True, "shares": shares, "entry_price": price})
+
+
+@app.route("/api/cover", methods=["POST"])
+def api_cover():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    data = load_data()
+    uid = session["user_id"]
+    shorts = data.get("shorts", {})
+    if uid not in shorts:
+        return jsonify({"error": "No open short position."}), 400
+    short = shorts.pop(uid)
+    price = data["stock_price"]
+    pnl = round((short["entry_price"] - price) * short["shares"], 2)
+    u = get_user(data, uid)
+    u["balance"] = round(max(0, u["balance"] + pnl), 2)
+    data["shorts"] = shorts
+    save_data(data)
+    return jsonify({"ok": True, "pnl": pnl, "balance": u["balance"]})
+
+
+@app.route("/api/limitbuy", methods=["POST"])
+def api_limitbuy():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    shares = int(request.json.get("shares", 0))
+    price = float(request.json.get("price", 0))
+    if shares <= 0 or price <= 0:
+        return jsonify({"error": "invalid values"}), 400
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    cost = round(shares * price, 2)
+    if u["balance"] < cost:
+        return jsonify({"error": f"Not enough cash. Need {fmt(cost)}"}), 400
+    u["balance"] = round(u["balance"] - cost, 2)
+    data.setdefault("limit_orders", []).append({
+        "user_id": session["user_id"], "type": "buy", "shares": shares, "price": round(price, 2)
+    })
+    save_data(data)
+    return jsonify({"ok": True, "shares": shares, "price": price, "reserved": cost})
+
+
+@app.route("/api/limitsell", methods=["POST"])
+def api_limitsell():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    shares = int(request.json.get("shares", 0))
+    price = float(request.json.get("price", 0))
+    if shares <= 0 or price <= 0:
+        return jsonify({"error": "invalid values"}), 400
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    if u["shares"] < shares:
+        return jsonify({"error": f"You only have {u['shares']} shares"}), 400
+    u["shares"] -= shares
+    data.setdefault("limit_orders", []).append({
+        "user_id": session["user_id"], "type": "sell", "shares": shares, "price": round(price, 2)
+    })
+    save_data(data)
+    return jsonify({"ok": True, "shares": shares, "price": price})
+
+
+@app.route("/api/cancel_order", methods=["POST"])
+def api_cancel_order():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    idx = int(request.json.get("index", -1))
+    data = load_data()
+    uid = session["user_id"]
+    user_orders = [(i, o) for i, o in enumerate(data.get("limit_orders", [])) if o["user_id"] == uid]
+    if idx < 0 or idx >= len(user_orders):
+        return jsonify({"error": "invalid order"}), 400
+    global_idx, order = user_orders[idx]
+    # Refund reserved funds/shares
+    u = get_user(data, uid)
+    if order["type"] == "buy":
+        u["balance"] = round(u["balance"] + order["shares"] * order["price"], 2)
+    else:
+        u["shares"] += order["shares"]
+    data["limit_orders"].pop(global_idx)
+    save_data(data)
+    return jsonify({"ok": True})
+
+
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
 CHAT_META_FILE = DATA_FILE.replace("data.json", "chat_meta.json")
@@ -724,38 +824,121 @@ async function fetchMe() {
       <div class="p-stat"><div class="p-stat-label">Cash</div><div class="p-stat-value" id="my-cash">${fmt(u.cash)}</div></div>
       <div class="p-stat" style="grid-column:span 2"><div class="p-stat-label">Invested Value</div><div class="p-stat-value" id="my-invested">${fmt(u.invested)}</div></div>
     </div>
-    <input type="number" id="trade-amount" class="trade-input" placeholder="Number of shares..." min="1"/>
-    <div class="trade-btns">
-      <button class="btn btn-buy" style="flex:1" onclick="trade('buy')">📈 Buy</button>
-      <button class="btn btn-sell" style="flex:1" onclick="trade('sell')">📉 Sell</button>
+    <!-- Trading tabs -->
+    <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">
+      ${['Buy','Sell','Short','Limits'].map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="zoom-btn ${t==='Buy'?'active':''}" style="flex:1">${t}</button>`).join('')}
     </div>
-    ${u.short ? `<div style="margin-top:10px;background:#ed424518;border:1px solid #ed424540;border-radius:8px;padding:10px 12px;font-size:13px">
-      <div style="font-weight:700;color:var(--red);margin-bottom:4px">📉 Short Position Open</div>
-      <div style="color:var(--muted)">${u.short.shares} shares shorted @ ${fmt(u.short.entry_price)}</div>
-      <div style="${u.short_pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">P&L: ${u.short_pnl >= 0 ? '+' : ''}${fmt(u.short_pnl)}</div>
-    </div>` : ''}
-    ${u.limit_orders && u.limit_orders.length ? `<div style="margin-top:10px;font-size:12px;color:var(--muted)">
-      <div style="font-weight:700;margin-bottom:4px">⏳ Limit Orders</div>
-      ${u.limit_orders.map(o => `<div>${o.type === 'buy' ? '🟢 Buy' : '🔴 Sell'} ${o.shares} @ ${fmt(o.price)}</div>`).join('')}
-    </div>` : ''}`;
+
+    <div id="tab-buy-content">
+      <input type="number" id="trade-amount" class="trade-input" placeholder="Shares to buy..." min="1"/>
+      <button class="btn btn-buy" style="width:100%;margin-top:8px" onclick="trade('buy')">📈 Buy SUS</button>
+    </div>
+
+    <div id="tab-sell-content" style="display:none">
+      <input type="number" id="sell-amount" class="trade-input" placeholder="Shares to sell..." min="1"/>
+      <button class="btn btn-sell" style="width:100%;margin-top:8px" onclick="trade('sell')">📉 Sell SUS</button>
+    </div>
+
+    <div id="tab-short-content" style="display:none">
+      ${u.short ? `
+        <div style="background:#ed424518;border:1px solid #ed424540;border-radius:8px;padding:12px;margin-bottom:10px">
+          <div style="font-weight:700;color:var(--red);margin-bottom:6px">📉 Open Short Position</div>
+          <div style="font-size:13px;color:var(--muted)">${u.short.shares} shares @ ${fmt(u.short.entry_price)}</div>
+          <div style="font-size:15px;font-weight:700;${u.short_pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">P&L: ${u.short_pnl >= 0 ? '+' : ''}${fmt(u.short_pnl)}</div>
+        </div>
+        <button class="btn btn-sell" style="width:100%" onclick="coverShort()">Close Short Position</button>
+      ` : `
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Short selling lets you profit when the price drops. You borrow shares and buy them back later at a lower price.</div>
+        <input type="number" id="short-amount" class="trade-input" placeholder="Shares to short..." min="1"/>
+        <button class="btn btn-sell" style="width:100%;margin-top:8px" onclick="openShort()">📉 Open Short</button>
+      `}
+    </div>
+
+    <div id="tab-limits-content" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">
+        <input type="number" id="lshares" class="trade-input" placeholder="Shares" min="1"/>
+        <input type="number" id="lprice" class="trade-input" placeholder="Target price" step="0.01"/>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:12px">
+        <button class="btn btn-buy" style="flex:1" onclick="placeLimit('buy')">🟢 Limit Buy</button>
+        <button class="btn btn-sell" style="flex:1" onclick="placeLimit('sell')">🔴 Limit Sell</button>
+      </div>
+      <div id="orders-list" style="font-size:12px">
+        ${u.limit_orders && u.limit_orders.length ? u.limit_orders.map((o,i) => `
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid var(--border)">
+            <span style="color:${o.type==='buy'?'var(--green)':'var(--red)'}">● ${o.type==='buy'?'Buy':'Sell'} ${o.shares} @ ${fmt(o.price)}</span>
+            <button onclick="cancelOrder(${i})" style="margin-left:auto;background:none;border:none;color:var(--red);cursor:pointer;font-size:11px">✕ Cancel</button>
+          </div>`).join('') : '<div style="color:var(--muted)">No active limit orders.</div>'}
+      </div>
+    </div>`;
+}
+
+function setTab(tab) {
+  ['buy','sell','short','limits'].forEach(t => {
+    const el = document.getElementById('tab-'+t+'-content');
+    const btn = document.getElementById('tab-'+t);
+    if (el) el.style.display = t === tab ? 'block' : 'none';
+    if (btn) btn.classList.toggle('active', t === tab);
+  });
 }
 
 async function trade(action) {
-  const shares = parseInt(document.getElementById('trade-amount').value);
+  const inputId = action === 'buy' ? 'trade-amount' : 'sell-amount';
+  const shares = parseInt(document.getElementById(inputId)?.value);
   if (!shares || shares < 1) { showToast('Enter a valid number of shares', false); return; }
   const res = await fetch('/api/' + action, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ shares })
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({shares})
   });
   const data = await res.json();
   if (!res.ok) { showToast(data.error, false); return; }
-  if (action === 'buy') {
-    showToast(`Bought ${data.bought} shares for ${fmt(data.cost)}`);
-  } else {
-    showToast(`Sold ${data.sold} shares for ${fmt(data.earnings)}`);
-  }
-  document.getElementById('trade-amount').value = '';
+  document.getElementById(inputId).value = '';
+  if (action === 'buy') showToast(`Bought ${data.bought} shares for ${fmt(data.cost)}`);
+  else showToast(`Sold ${data.sold} shares for ${fmt(data.earnings)}`);
+  fetchMe();
+}
+
+async function openShort() {
+  const shares = parseInt(document.getElementById('short-amount')?.value);
+  if (!shares || shares < 1) { showToast('Enter a valid number of shares', false); return; }
+  const res = await fetch('/api/short', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({shares})
+  });
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error, false); return; }
+  showToast(`Shorted ${data.shares} shares @ ${fmt(data.entry_price)}`);
+  fetchMe();
+}
+
+async function coverShort() {
+  const res = await fetch('/api/cover', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error, false); return; }
+  showToast(`Short covered. P&L: ${data.pnl >= 0 ? '+' : ''}${fmt(data.pnl)}`, data.pnl >= 0);
+  fetchMe();
+}
+
+async function placeLimit(type) {
+  const shares = parseInt(document.getElementById('lshares')?.value);
+  const price = parseFloat(document.getElementById('lprice')?.value);
+  if (!shares || !price || shares < 1 || price <= 0) { showToast('Enter valid shares and price', false); return; }
+  const res = await fetch('/api/limit' + type, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({shares, price})
+  });
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error, false); return; }
+  document.getElementById('lshares').value = '';
+  document.getElementById('lprice').value = '';
+  showToast(`Limit ${type} set: ${shares} shares @ ${fmt(price)}`);
+  fetchMe();
+}
+
+async function cancelOrder(idx) {
+  const res = await fetch('/api/cancel_order', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({index: idx})
+  });
+  const data = await res.json();
+  if (!res.ok) { showToast(data.error, false); return; }
+  showToast('Order cancelled');
   fetchMe();
 }
 

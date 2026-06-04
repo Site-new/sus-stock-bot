@@ -649,6 +649,12 @@ DASHBOARD_HTML = """
       <div class="updated" id="updated">—</div>
     </div>
 
+    <!-- News feed -->
+    <div class="card">
+      <div class="card-title">📰 Market News</div>
+      <div id="news-feed"><div style="color:var(--muted);font-size:13px">No events yet — check back soon.</div></div>
+    </div>
+
     <!-- Chat -->
     <div class="card">
       <div class="card-title">💬 Live Chat</div>
@@ -695,11 +701,6 @@ DASHBOARD_HTML = """
       <div class="updated" id="lb-updated">—</div>
     </div>
 
-    <!-- News feed -->
-    <div class="card">
-      <div class="card-title">📰 Market News</div>
-      <div id="news-feed"><div style="color:var(--muted);font-size:13px">No events yet — check back soon.</div></div>
-    </div>
   </div>
 </div>
 

@@ -18,6 +18,9 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 ALLOWED_CHANNEL = "sus-stock"
 SUS_ONLY_CHANNEL = "sus-only"
+CHAT_CHANNEL = "susstock-chat"
+CHAT_FILE = DATA_FILE.replace("data.json", "chat.json")
+CHAT_META_FILE = DATA_FILE.replace("data.json", "chat_meta.json")
 
 DATA_FILE = os.environ.get("DATA_FILE", "/data/data.json" if os.path.isdir("/data") else "data.json")
 STARTING_BALANCE = 1000.0
@@ -50,6 +53,20 @@ def save_msg_ids(ids):
 
 _msg_ids = {}  # populated on startup
 
+
+def load_chat():
+    if not os.path.exists(CHAT_FILE):
+        return []
+    with open(CHAT_FILE, "r") as f:
+        return json.load(f)
+
+def save_chat(messages):
+    with open(CHAT_FILE, "w") as f:
+        json.dump(messages[-200:], f)
+
+def save_chat_meta(meta):
+    with open(CHAT_META_FILE, "w") as f:
+        json.dump(meta, f)
 
 def load_data():
     if not os.path.exists(DATA_FILE):
@@ -259,6 +276,27 @@ async def on_ready():
 @bot.event
 async def on_message(message):
     if message.author.bot:
+        await bot.process_commands(message)
+        return
+
+    if message.channel.name == CHAT_CHANNEL:
+        # Save channel ID so server.py can mirror web messages back here
+        save_chat_meta({"discord_channel_id": str(message.channel.id)})
+        # Bridge Discord message to website chat
+        messages = load_chat()
+        msg_id = (messages[-1]["id"] + 1) if messages else 1
+        import time
+        avatar_hash = str(message.author.avatar) if message.author.avatar else None
+        messages.append({
+            "id": msg_id,
+            "user_id": str(message.author.id),
+            "username": message.author.display_name,
+            "avatar": avatar_hash,
+            "text": message.content,
+            "ts": int(time.time()),
+            "source": "discord",
+        })
+        save_chat(messages)
         await bot.process_commands(message)
         return
 

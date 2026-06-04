@@ -294,6 +294,14 @@ def api_sell():
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
 
+CHAT_META_FILE = DATA_FILE.replace("data.json", "chat_meta.json")
+
+def load_chat_meta():
+    if not os.path.exists(CHAT_META_FILE):
+        return {}
+    with open(CHAT_META_FILE, "r") as f:
+        return json.load(f)
+
 def load_chat():
     if not os.path.exists(CHAT_FILE):
         return []
@@ -332,6 +340,19 @@ def api_chat_send():
     }
     messages.append(msg)
     save_chat(messages)
+    # Mirror to Discord #susstock-chat
+    if DISCORD_BOT_TOKEN:
+        try:
+            channel_id = load_chat_meta().get("discord_channel_id")
+            if channel_id:
+                requests.post(
+                    f"https://discord.com/api/v10/channels/{channel_id}/messages",
+                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                    json={"content": f"**{msg['username']}** (web): {text}"},
+                    timeout=3
+                )
+        except Exception:
+            pass
     return jsonify({"ok": True, "message": msg})
 
 
@@ -431,6 +452,11 @@ DASHBOARD_HTML = """
   .toast.ok { border-color: var(--green); color: var(--green); }
   .toast.err { border-color: var(--red); color: var(--red); }
 
+  /* Zoom buttons */
+  .zoom-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 6px; cursor: pointer; }
+  .zoom-btn:hover { border-color: var(--accent); color: var(--text); }
+  .zoom-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   /* Chat */
   .chat-msg { display: flex; gap: 8px; align-items: flex-start; }
   .chat-avatar { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
@@ -468,6 +494,14 @@ DASHBOARD_HTML = """
       <div class="price-hero">
         <span class="price" id="price">—</span>
         <span class="change-badge" id="change-badge">—</span>
+      </div>
+      <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--muted);align-self:center;margin-right:4px">Zoom:</span>
+        <button class="zoom-btn active" onclick="setZoom(20,'5m')" data-z="5m">5m</button>
+        <button class="zoom-btn" onclick="setZoom(40,'10m')" data-z="10m">10m</button>
+        <button class="zoom-btn" onclick="setZoom(120,'30m')" data-z="30m">30m</button>
+        <button class="zoom-btn" onclick="setZoom(240,'1h')" data-z="1h">1h</button>
+        <button class="zoom-btn" onclick="setZoom(0,'all')" data-z="all">All</button>
       </div>
       <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
       <div class="range-bar-wrap">
@@ -582,15 +616,14 @@ async function fetchStock() {
   const d = await fetch('/api/stock').then(r => r.json());
   const { price, change, change_pct: pct, history, timestamps } = d;
   const up = change >= 0;
+  if (!history) return;
   document.getElementById('price').textContent = fmt(price);
   const badge = document.getElementById('change-badge');
   badge.textContent = `${up?'+':''}${fmt(change)} (${up?'+':''}${pct}%)`;
   badge.className = 'change-badge ' + (up ? 'up' : 'down');
-  chart.data.datasets[0].borderColor = up ? '#57f287' : '#ed4245';
-  chart.data.datasets[0].backgroundColor = up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)';
-  chart.data.labels = timestamps && timestamps.length ? timestamps : history.map((_,i) => i);
-  chart.data.datasets[0].data = history;
-  chart.update();
+  fullHistory = history;
+  fullTimestamps = timestamps || [];
+  renderChart();
   document.getElementById('range-marker').style.left = ((price - 5) / 495 * 100) + '%';
   document.getElementById('range-label').textContent = fmt(price);
   const low = Math.min(...history), high = Math.max(...history), tc = price - history[0];
@@ -680,6 +713,26 @@ async function fetchLeaderboard() {
 // ── Chat ──────────────────────────────────────────────────────────────────────
 let lastMsgId = 0;
 let isLoggedIn = false;
+let zoomPoints = 20; // default 10m (20 × 30s ticks)
+let fullHistory = [];
+let fullTimestamps = [];
+
+function setZoom(points, label) {
+  zoomPoints = points;
+  document.querySelectorAll('.zoom-btn').forEach(b => b.classList.toggle('active', b.dataset.z === label));
+  renderChart();
+}
+
+function renderChart() {
+  const h = zoomPoints > 0 ? fullHistory.slice(-zoomPoints) : fullHistory;
+  const t = zoomPoints > 0 ? fullTimestamps.slice(-zoomPoints) : fullTimestamps;
+  const up = h.length < 2 || h[h.length-1] >= h[0];
+  chart.data.datasets[0].borderColor = up ? '#57f287' : '#ed4245';
+  chart.data.datasets[0].backgroundColor = up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)';
+  chart.data.labels = t.length ? t : h.map((_,i) => i);
+  chart.data.datasets[0].data = h;
+  chart.update();
+}
 
 function tsToTime(ts) {
   return new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});

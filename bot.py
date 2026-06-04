@@ -805,7 +805,7 @@ async def before_fluctuate():
     await bot.wait_until_ready()
 
 
-@tasks.loop(hours=4)
+@tasks.loop(minutes=20)
 async def earnings_report():
     """Post a random earnings report causing a price spike or drop."""
     if not is_market_open():
@@ -838,7 +838,7 @@ async def before_earnings():
     await bot.wait_until_ready()
 
 
-@tasks.loop(hours=6)
+@tasks.loop(minutes=20)
 async def pay_dividends():
     """Pay $0.50 per share to all shareholders."""
     data = load_data()
@@ -885,7 +885,7 @@ async def before_bull_bear():
     await bot.wait_until_ready()
 
 
-@tasks.loop(hours=3)
+@tasks.loop(minutes=20)
 async def insider_tip():
     """DM a random shareholder a hint about the next price direction."""
     data = load_data()

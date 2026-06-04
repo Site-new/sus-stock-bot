@@ -8,6 +8,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 
 DATA_FILE = os.environ.get("DATA_FILE", "/data/data.json" if os.path.isdir("/data") else "data.json")
+CHAT_FILE = DATA_FILE.replace("data.json", "chat.json")
 STARTING_BALANCE = 1000.0
 
 DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")
@@ -291,6 +292,49 @@ def api_sell():
     return jsonify({"ok": True, "sold": shares, "earnings": earnings, "balance": u["balance"], "shares": u["shares"]})
 
 
+# ── Chat ──────────────────────────────────────────────────────────────────────
+
+def load_chat():
+    if not os.path.exists(CHAT_FILE):
+        return []
+    with open(CHAT_FILE, "r") as f:
+        return json.load(f)
+
+def save_chat(messages):
+    with open(CHAT_FILE, "w") as f:
+        json.dump(messages[-200:], f)  # keep last 200 messages
+
+
+@app.route("/api/chat")
+def api_chat():
+    after = int(request.args.get("after", 0))
+    messages = load_chat()
+    return jsonify([m for m in messages if m["id"] > after])
+
+
+@app.route("/api/chat/send", methods=["POST"])
+def api_chat_send():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    text = request.json.get("text", "").strip()
+    if not text or len(text) > 300:
+        return jsonify({"error": "invalid message"}), 400
+    messages = load_chat()
+    msg_id = (messages[-1]["id"] + 1) if messages else 1
+    import time
+    msg = {
+        "id": msg_id,
+        "user_id": session["user_id"],
+        "username": session["username"],
+        "avatar": session.get("avatar"),
+        "text": text,
+        "ts": int(time.time()),
+    }
+    messages.append(msg)
+    save_chat(messages)
+    return jsonify({"ok": True, "message": msg})
+
+
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -386,6 +430,19 @@ DASHBOARD_HTML = """
   .toast.show { opacity: 1; }
   .toast.ok { border-color: var(--green); color: var(--green); }
   .toast.err { border-color: var(--red); color: var(--red); }
+
+  /* Chat */
+  .chat-msg { display: flex; gap: 8px; align-items: flex-start; }
+  .chat-avatar { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
+  .chat-bubble { background: var(--surface2); border-radius: 0 8px 8px 8px; padding: 6px 10px; max-width: 220px; }
+  .chat-name { font-size: 11px; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+  .chat-text { font-size: 13px; word-break: break-word; line-height: 1.4; }
+  .chat-time { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .chat-msg.me { flex-direction: row-reverse; }
+  .chat-msg.me .chat-bubble { background: #5865f230; border-radius: 8px 0 8px 8px; }
+  .chat-msg.me .chat-name { text-align: right; color: var(--green); }
+  #chat-messages::-webkit-scrollbar { width: 4px; }
+  #chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 </style>
 </head>
 <body>
@@ -464,6 +521,26 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Chat panel -->
+<div id="chat-panel" style="position:fixed;bottom:0;right:24px;width:320px;z-index:50;display:flex;flex-direction:column;box-shadow:0 -4px 24px #0006">
+  <div id="chat-header" onclick="toggleChat()" style="background:var(--accent);color:#fff;padding:10px 16px;border-radius:12px 12px 0 0;cursor:pointer;display:flex;align-items:center;gap:8px;user-select:none">
+    <span style="font-size:16px">💬</span>
+    <span style="font-weight:700;font-size:14px">Live Chat</span>
+    <span id="chat-unread" style="background:#fff;color:var(--accent);font-size:11px;font-weight:800;padding:1px 7px;border-radius:999px;display:none"></span>
+    <span style="margin-left:auto;font-size:12px" id="chat-chevron">▲</span>
+  </div>
+  <div id="chat-body" style="background:var(--surface);border:1px solid var(--border);border-top:none;display:flex;flex-direction:column;height:360px">
+    <div id="chat-messages" style="flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;scroll-behavior:smooth"></div>
+    <div id="chat-input-area" style="padding:10px 12px;border-top:1px solid var(--border);display:flex;gap:8px">
+      <input id="chat-input" class="trade-input" placeholder="Say something..." style="flex:1;font-size:13px;padding:7px 10px" onkeydown="if(event.key==='Enter')sendChat()" maxlength="300"/>
+      <button class="btn btn-discord" style="padding:7px 12px;font-size:13px" onclick="sendChat()">Send</button>
+    </div>
+    <div id="chat-login-prompt" style="padding:12px;text-align:center;font-size:12px;color:var(--muted);border-top:1px solid var(--border);display:none">
+      <a href="/login" style="color:var(--accent);font-weight:600">Login with Discord</a> to chat
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -534,7 +611,7 @@ async function fetchStock() {
 
 async function fetchMe() {
   const res = await fetch('/api/me');
-  if (!res.ok) return;
+  if (!res.ok) { initChat(); return; }
   const u = await res.json();
   myUserId = u.user_id;
 
@@ -550,6 +627,7 @@ async function fetchMe() {
 
   // Portfolio
   const pnlColor = u.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+  isLoggedIn = true;
   if (u.username === 'slasher_asher') {
     document.getElementById('admin-toggle').style.display = 'block';
     loadAdmin();
@@ -605,7 +683,80 @@ async function fetchLeaderboard() {
   document.getElementById('lb-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 }
 
-fetchStock(); fetchMe(); fetchLeaderboard();
+// ── Chat ──────────────────────────────────────────────────────────────────────
+let chatOpen = true;
+let lastMsgId = 0;
+let unreadCount = 0;
+let isLoggedIn = false;
+
+function toggleChat() {
+  chatOpen = !chatOpen;
+  document.getElementById('chat-body').style.display = chatOpen ? 'flex' : 'none';
+  document.getElementById('chat-chevron').textContent = chatOpen ? '▲' : '▼';
+  if (chatOpen) { unreadCount = 0; document.getElementById('chat-unread').style.display = 'none'; }
+}
+
+function tsToTime(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+
+function appendMessage(m, scroll=true) {
+  const el = document.getElementById('chat-messages');
+  const isMe = m.user_id === myUserId;
+  const avatarUrl = m.avatar
+    ? `https://cdn.discordapp.com/avatars/${m.user_id}/${m.avatar}.png?size=32`
+    : `https://cdn.discordapp.com/embed/avatars/0.png`;
+  const div = document.createElement('div');
+  div.className = 'chat-msg' + (isMe ? ' me' : '');
+  div.innerHTML = `
+    <img class="chat-avatar" src="${avatarUrl}" alt=""/>
+    <div class="chat-bubble">
+      <div class="chat-name">${m.username}</div>
+      <div class="chat-text">${m.text.replace(/</g,'&lt;')}</div>
+      <div class="chat-time">${tsToTime(m.ts)}</div>
+    </div>`;
+  el.appendChild(div);
+  if (scroll) el.scrollTop = el.scrollHeight;
+  lastMsgId = Math.max(lastMsgId, m.id);
+  if (!chatOpen && !isMe) {
+    unreadCount++;
+    const badge = document.getElementById('chat-unread');
+    badge.textContent = unreadCount;
+    badge.style.display = 'inline';
+  }
+}
+
+async function fetchChat() {
+  const msgs = await fetch(`/api/chat?after=${lastMsgId}`).then(r => r.json()).catch(() => []);
+  msgs.forEach(m => appendMessage(m));
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  const res = await fetch('/api/chat/send', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text})
+  });
+  if (!res.ok) { showToast('Could not send message', false); return; }
+  const d = await res.json();
+  appendMessage(d.message);
+}
+
+function initChat() {
+  if (!isLoggedIn) {
+    document.getElementById('chat-input-area').style.display = 'none';
+    document.getElementById('chat-login-prompt').style.display = 'block';
+  }
+  fetchChat();
+  setInterval(fetchChat, 2000);
+}
+
+fetchStock(); fetchLeaderboard();
+fetchMe().then(() => initChat()).catch(() => initChat());
 setInterval(fetchStock, 10000);
 setInterval(fetchMe, 15000);
 setInterval(fetchLeaderboard, 15000);

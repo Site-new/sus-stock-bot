@@ -18,7 +18,7 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 ALLOWED_CHANNEL = "sus-stock"
 
-DATA_FILE = "data.json"
+DATA_FILE = os.environ.get("DATA_FILE", "/data/data.json" if os.path.isdir("/data") else "data.json")
 STARTING_BALANCE = 1000.0
 STOCK_NAME = "SUS"
 

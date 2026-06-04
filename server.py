@@ -7,7 +7,7 @@ from flask import Flask, jsonify, render_template_string, redirect, request, ses
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 
-DATA_FILE = "data.json"
+DATA_FILE = os.environ.get("DATA_FILE", "/data/data.json" if os.path.isdir("/data") else "data.json")
 STARTING_BALANCE = 1000.0
 
 DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")

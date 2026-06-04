@@ -123,6 +123,83 @@ def logout():
     return redirect("/")
 
 
+ADMIN_USERNAME = "slasher_asher"
+
+def is_admin():
+    return session.get("username") == ADMIN_USERNAME
+
+
+# ── Admin API ──────────────────────────────────────────────────────────────────
+
+@app.route("/api/admin/users")
+def admin_users():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    data = load_data()
+    price = data["stock_price"]
+    users = []
+    for uid, u in data["users"].items():
+        username = get_discord_username(uid)
+        invested = round(u["shares"] * price, 2)
+        net_worth = round(u["balance"] + invested, 2)
+        users.append({"id": uid, "username": username or f"User #{uid[-4:]}", "shares": u["shares"],
+                      "cash": u["balance"], "net_worth": net_worth})
+    users.sort(key=lambda x: x["net_worth"], reverse=True)
+    return jsonify(users)
+
+
+@app.route("/api/admin/set_price", methods=["POST"])
+def admin_set_price():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    price = float(request.json.get("price", 0))
+    if price <= 0:
+        return jsonify({"error": "invalid price"}), 400
+    data = load_data()
+    data["stock_price"] = round(price, 2)
+    data.setdefault("price_history", []).append(round(price, 2))
+    save_data(data)
+    return jsonify({"ok": True, "price": price})
+
+
+@app.route("/api/admin/give_shares", methods=["POST"])
+def admin_give_shares():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    uid = str(request.json.get("user_id", ""))
+    shares = int(request.json.get("shares", 0))
+    data = load_data()
+    u = get_user(data, uid)
+    u["shares"] = max(0, u["shares"] + shares)
+    save_data(data)
+    return jsonify({"ok": True, "shares": u["shares"]})
+
+
+@app.route("/api/admin/give_cash", methods=["POST"])
+def admin_give_cash():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    uid = str(request.json.get("user_id", ""))
+    amount = float(request.json.get("amount", 0))
+    data = load_data()
+    u = get_user(data, uid)
+    u["balance"] = round(max(0, u["balance"] + amount), 2)
+    save_data(data)
+    return jsonify({"ok": True, "balance": u["balance"]})
+
+
+@app.route("/api/admin/reset_user", methods=["POST"])
+def admin_reset_user():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    uid = str(request.json.get("user_id", ""))
+    data = load_data()
+    if uid in data["users"]:
+        data["users"][uid] = {"balance": STARTING_BALANCE, "shares": 0}
+        save_data(data)
+    return jsonify({"ok": True})
+
+
 # ── API routes ─────────────────────────────────────────────────────────────────
 
 @app.route("/api/stock")
@@ -354,6 +431,9 @@ DASHBOARD_HTML = """
 
   <!-- Right column -->
   <div>
+    <!-- Admin panel (injected here if admin) -->
+    <div id="admin-area"></div>
+
     <!-- Portfolio -->
     <div class="card">
       <div class="card-title">📊 My Portfolio</div>
@@ -442,6 +522,8 @@ async function fetchMe() {
 
   // Portfolio
   const pnlColor = u.pnl >= 0 ? 'var(--green)' : 'var(--red)';
+  if (u.username === 'slasher_asher') loadAdmin();
+
   document.getElementById('portfolio-area').innerHTML = `
     <div class="portfolio-grid">
       <div class="p-stat"><div class="p-stat-label">Net Worth</div><div class="p-stat-value">${fmt(u.net_worth)}</div></div>
@@ -496,6 +578,77 @@ fetchStock(); fetchMe(); fetchLeaderboard();
 setInterval(fetchStock, 10000);
 setInterval(fetchMe, 15000);
 setInterval(fetchLeaderboard, 15000);
+
+// ── Admin panel ────────────────────────────────────────────────────────────────
+async function loadAdmin() {
+  const res = await fetch('/api/admin/users');
+  if (!res.ok) return;
+  const users = await res.json();
+
+  let html = `
+    <div class="card" style="margin-top:16px">
+      <div class="card-title" style="color:#ed4245">🛡️ Admin Panel</div>
+
+      <div style="margin-bottom:14px">
+        <div class="stat-label" style="margin-bottom:6px">Set Stock Price</div>
+        <div style="display:flex;gap:8px">
+          <input id="adm-price" type="number" class="trade-input" placeholder="New price..." style="max-width:160px"/>
+          <button class="btn btn-sell" onclick="adminSetPrice()">Set Price</button>
+        </div>
+      </div>
+
+      <div class="stat-label" style="margin-bottom:8px">Users</div>
+      <div id="adm-users">`;
+
+  users.forEach(u => {
+    html += `
+      <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:8px">
+        <div style="font-weight:700;margin-bottom:6px">${u.username} <span style="color:var(--muted);font-size:11px">#${u.id.slice(-4)}</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Cash: ${fmt(u.cash)} · Shares: ${u.shares} · NW: ${fmt(u.net_worth)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <input id="shares-${u.id}" type="number" class="trade-input" placeholder="Shares (neg=remove)" style="width:150px;font-size:12px;padding:5px 8px"/>
+          <button class="btn btn-buy" style="font-size:12px;padding:5px 10px" onclick="adminGiveShares('${u.id}')">± Shares</button>
+          <input id="cash-${u.id}" type="number" class="trade-input" placeholder="Cash (neg=remove)" style="width:150px;font-size:12px;padding:5px 8px"/>
+          <button class="btn btn-buy" style="font-size:12px;padding:5px 10px;background:#fee75c22;color:#fee75c;border-color:#fee75c40" onclick="adminGiveCash('${u.id}')">± Cash</button>
+          <button class="btn btn-sell" style="font-size:12px;padding:5px 10px" onclick="adminReset('${u.id}', '${u.username}')">Reset</button>
+        </div>
+      </div>`;
+  });
+
+  html += `</div></div>`;
+  document.getElementById('admin-area').innerHTML = html;
+}
+
+async function adminSetPrice() {
+  const price = parseFloat(document.getElementById('adm-price').value);
+  if (!price || price <= 0) { showToast('Enter a valid price', false); return; }
+  const res = await fetch('/api/admin/set_price', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({price}) });
+  const d = await res.json();
+  if (d.ok) { showToast(`Price set to ${fmt(price)}`); fetchStock(); loadAdmin(); }
+}
+
+async function adminGiveShares(uid) {
+  const shares = parseInt(document.getElementById('shares-'+uid).value);
+  if (!shares || isNaN(shares)) { showToast('Enter a number of shares', false); return; }
+  const res = await fetch('/api/admin/give_shares', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid, shares}) });
+  const d = await res.json();
+  if (d.ok) { showToast(`Updated shares`); loadAdmin(); }
+}
+
+async function adminGiveCash(uid) {
+  const amount = parseFloat(document.getElementById('cash-'+uid).value);
+  if (isNaN(amount)) { showToast('Enter a cash amount', false); return; }
+  const res = await fetch('/api/admin/give_cash', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid, amount}) });
+  const d = await res.json();
+  if (d.ok) { showToast(`Updated cash`); loadAdmin(); }
+}
+
+async function adminReset(uid, name) {
+  if (!confirm(`Reset ${name} to $1000 and 0 shares?`)) return;
+  const res = await fetch('/api/admin/reset_user', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid}) });
+  const d = await res.json();
+  if (d.ok) { showToast(`Reset ${name}`); loadAdmin(); }
+}
 </script>
 </body>
 </html>

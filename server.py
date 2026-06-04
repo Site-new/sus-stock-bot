@@ -517,8 +517,9 @@ DASHBOARD_HTML = """
   .btn-sell:hover { background: #ed424540; }
   .avatar { width: 30px; height: 30px; border-radius: 50%; }
 
-  .layout { display: grid; grid-template-columns: 1fr 340px; gap: 20px; padding: 20px 28px; max-width: 1400px; margin: 0 auto; }
-  @media(max-width:900px){ .layout{ grid-template-columns:1fr; } }
+  .layout { display: grid; grid-template-columns: 260px 1fr 340px; gap: 20px; padding: 20px 28px; max-width: 1600px; margin: 0 auto; }
+  @media(max-width:1100px){ .layout{ grid-template-columns: 1fr 340px; } .news-col{ display:none; } }
+  @media(max-width:800px){ .layout{ grid-template-columns:1fr; } }
 
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin-bottom: 16px; }
   .card-title { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
@@ -606,7 +607,15 @@ DASHBOARD_HTML = """
 </header>
 
 <div class="layout">
-  <!-- Left column -->
+  <!-- News column -->
+  <div class="news-col">
+    <div class="card" style="height:calc(100vh - 120px);overflow-y:auto;position:sticky;top:20px">
+      <div class="card-title">📰 Market News</div>
+      <div id="news-feed"><div style="color:var(--muted);font-size:13px">No events yet — check back soon.</div></div>
+    </div>
+  </div>
+
+  <!-- Center column -->
   <div>
     <!-- News ticker -->
     <div id="news-ticker" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:var(--text);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;display:none">
@@ -647,12 +656,6 @@ DASHBOARD_HTML = """
         <div class="stat"><div class="stat-label">Data Points</div><div class="stat-value" id="stat-points">—</div></div>
       </div>
       <div class="updated" id="updated">—</div>
-    </div>
-
-    <!-- News feed -->
-    <div class="card">
-      <div class="card-title">📰 Market News</div>
-      <div id="news-feed"><div style="color:var(--muted);font-size:13px">No events yet — check back soon.</div></div>
     </div>
 
     <!-- Chat -->

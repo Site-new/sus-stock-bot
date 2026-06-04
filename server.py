@@ -431,8 +431,11 @@ DASHBOARD_HTML = """
 
   <!-- Right column -->
   <div>
-    <!-- Admin panel (injected here if admin) -->
-    <div id="admin-area"></div>
+    <!-- Admin panel toggle (only shown to admin) -->
+    <div id="admin-toggle" style="display:none;margin-bottom:12px">
+      <button class="btn" style="background:#ed424522;color:#ed4245;border:1px solid #ed424540;width:100%" onclick="toggleAdmin()">🛡️ Admin Panel</button>
+    </div>
+    <div id="admin-area" style="display:none"></div>
 
     <!-- Portfolio -->
     <div class="card">
@@ -522,7 +525,10 @@ async function fetchMe() {
 
   // Portfolio
   const pnlColor = u.pnl >= 0 ? 'var(--green)' : 'var(--red)';
-  if (u.username === 'slasher_asher') loadAdmin();
+  if (u.username === 'slasher_asher') {
+    document.getElementById('admin-toggle').style.display = 'block';
+    loadAdmin();
+  }
 
   document.getElementById('portfolio-area').innerHTML = `
     <div class="portfolio-grid">
@@ -580,13 +586,19 @@ setInterval(fetchMe, 15000);
 setInterval(fetchLeaderboard, 15000);
 
 // ── Admin panel ────────────────────────────────────────────────────────────────
+let adminOpen = false;
+function toggleAdmin() {
+  adminOpen = !adminOpen;
+  document.getElementById('admin-area').style.display = adminOpen ? 'block' : 'none';
+  document.querySelector('#admin-toggle button').textContent = adminOpen ? '🛡️ Hide Admin Panel' : '🛡️ Admin Panel';
+}
 async function loadAdmin() {
   const res = await fetch('/api/admin/users');
   if (!res.ok) return;
   const users = await res.json();
 
   let html = `
-    <div class="card" style="margin-top:16px">
+    <div class="card">
       <div class="card-title" style="color:#ed4245">🛡️ Admin Panel</div>
 
       <div style="margin-bottom:14px">

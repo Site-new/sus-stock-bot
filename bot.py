@@ -26,11 +26,28 @@ MIN_PRICE = 5.0
 MAX_PRICE = 500.0
 BASE_PRICE = 50.0
 
-# Webhook message IDs for in-place editing
-chart_message_id = None
-leaderboard_message_id = None
-portfolio_message_id = None
+# Webhook message IDs — loaded from disk so restarts keep editing the same messages
 chart_webhook = None
+
+def load_msg_ids():
+    try:
+        with open(DATA_FILE, "r") as f:
+            d = json.load(f)
+        return d.get("_msg_ids", {})
+    except Exception:
+        return {}
+
+def save_msg_ids(ids):
+    try:
+        with open(DATA_FILE, "r") as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+    d["_msg_ids"] = ids
+    with open(DATA_FILE, "w") as f:
+        json.dump(d, f, indent=2)
+
+_msg_ids = {}  # populated on startup
 
 
 def load_data():
@@ -227,9 +244,11 @@ async def only_in_sus_stock(ctx):
 
 @bot.event
 async def on_ready():
+    global _msg_ids
     print(f"Sus Stock bot is online as {bot.user}")
     bot.add_view(TradeView())
     bot.add_view(PortfolioView())
+    _msg_ids = load_msg_ids()
     await bot.tree.sync()
     print("Slash commands synced.")
     bot.loop.create_task(startup_messages())
@@ -359,7 +378,7 @@ async def slash_networth(interaction: discord.Interaction, user: discord.Member 
 
 
 async def post_chart():
-    global chart_message_id
+    global _msg_ids
     if chart_webhook is None:
         return
     data = load_data()
@@ -380,19 +399,22 @@ async def post_chart():
     embed.set_image(url="attachment://sus_stock.png")
     embed.set_footer(text=f"Last updated {datetime.now().strftime('%H:%M:%S')}")
 
+    mid = _msg_ids.get("chart")
     try:
-        if chart_message_id is None:
+        if mid is None:
             msg = await chart_webhook.send(embed=embed, file=file, view=TradeView(), wait=True)
-            chart_message_id = msg.id
+            _msg_ids["chart"] = msg.id
+            save_msg_ids(_msg_ids)
         else:
-            await chart_webhook.edit_message(chart_message_id, embed=embed, attachments=[file], view=TradeView())
+            await chart_webhook.edit_message(mid, embed=embed, attachments=[file], view=TradeView())
     except Exception as e:
         print(f"Chart update error: {e}")
-        chart_message_id = None
+        _msg_ids.pop("chart", None)
+        save_msg_ids(_msg_ids)
 
 
 async def post_leaderboard():
-    global leaderboard_message_id
+    global _msg_ids
     if chart_webhook is None:
         return
     data = load_data()
@@ -416,21 +438,27 @@ async def post_leaderboard():
     embed.description = "\n".join(lines) if lines else "No traders yet — be the first!"
     embed.set_footer(text=f"SUS price: {format_price(price)}  •  Updated {datetime.now().strftime('%H:%M:%S')}")
 
+    mid = _msg_ids.get("leaderboard")
     try:
-        if leaderboard_message_id is None:
+        if mid is None:
             msg = await chart_webhook.send(embed=embed, wait=True)
-            leaderboard_message_id = msg.id
+            _msg_ids["leaderboard"] = msg.id
+            save_msg_ids(_msg_ids)
         else:
-            await chart_webhook.edit_message(leaderboard_message_id, embed=embed)
+            await chart_webhook.edit_message(mid, embed=embed)
     except Exception as e:
         print(f"Leaderboard update error: {e}")
-        leaderboard_message_id = None
+        _msg_ids.pop("leaderboard", None)
+        save_msg_ids(_msg_ids)
 
 
 async def post_portfolio():
-    global portfolio_message_id
-    if chart_webhook is None or portfolio_message_id is not None:
+    global _msg_ids
+    if chart_webhook is None:
         return
+    mid = _msg_ids.get("portfolio")
+    if mid is not None:
+        return  # already posted, never needs re-posting
     embed = discord.Embed(
         title="📊 Your Portfolio",
         description="Click the button below to privately view your shares, net worth, cash, and invested value.",
@@ -438,7 +466,8 @@ async def post_portfolio():
     )
     try:
         msg = await chart_webhook.send(embed=embed, view=PortfolioView(), wait=True)
-        portfolio_message_id = msg.id
+        _msg_ids["portfolio"] = msg.id
+        save_msg_ids(_msg_ids)
     except Exception as e:
         print(f"Portfolio post error: {e}")
 

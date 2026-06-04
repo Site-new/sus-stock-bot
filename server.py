@@ -74,6 +74,7 @@ def fmt(amount):
 def login():
     state = secrets.token_hex(16)
     session["oauth_state"] = state
+    session["login_next"] = request.args.get("next", "/")
     params = {
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": DISCORD_REDIRECT_URI,
@@ -116,7 +117,8 @@ def callback():
     get_user(data, user_data["id"])
     save_data(data)
 
-    return redirect("/")
+    next_url = session.pop("login_next", "/")
+    return redirect(next_url)
 
 
 @app.route("/logout")
@@ -1678,7 +1680,7 @@ COMPANIES_HTML = """
   <h1>Companies</h1>
   <a href="/" class="nav-link">← Back to Market</a>
   <div class="auth-area" id="auth-area">
-    <a href="/login" class="btn btn-primary">Login with Discord</a>
+    <a href="/login?next=/companies" class="btn btn-primary">Login with Discord</a>
   </div>
 </header>
 
@@ -1736,7 +1738,7 @@ async function init() {
   if (me) {
     myUserId = me.user_id; myUsername = me.username;
     const avatarUrl = me.avatar ? `https://cdn.discordapp.com/avatars/${me.user_id}/${me.avatar}.png?size=64` : '';
-    document.getElementById('auth-area').innerHTML = `${avatarUrl ? `<img src="${avatarUrl}" class="avatar"/>` : ''}<span style="font-weight:600;font-size:13px">${me.username}</span><a href="/logout" class="btn btn-muted" style="font-size:12px;padding:5px 12px">Logout</a>`;
+    document.getElementById('auth-area').innerHTML = `${avatarUrl ? `<img src="${avatarUrl}" class="avatar"/>` : ''}<span style="font-weight:600;font-size:13px">${me.username}</span><a href="/logout" class="btn btn-muted" style="font-size:12px;padding:5px 12px">Logout</a><a href="/" class="btn btn-muted" style="font-size:12px;padding:5px 12px">📈 Market</a>`;
   }
   await loadCompanies();
   buildTypeGrid();

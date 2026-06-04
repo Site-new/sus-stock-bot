@@ -20,10 +20,10 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 ALLOWED_CHANNEL = "sus-stock"
 SUS_ONLY_CHANNEL = "sus-only"
 CHAT_CHANNEL = "susstock-chat"
-CHAT_FILE = DATA_FILE.replace("data.json", "chat.json")
-CHAT_META_FILE = DATA_FILE.replace("data.json", "chat_meta.json")
 
 DATA_FILE = os.environ.get("DATA_FILE", "/data/data.json" if os.path.isdir("/data") else "data.json")
+CHAT_FILE = DATA_FILE.replace("data.json", "chat.json")
+CHAT_META_FILE = DATA_FILE.replace("data.json", "chat_meta.json")
 STARTING_BALANCE = 1000.0
 STOCK_NAME = "SUS"
 

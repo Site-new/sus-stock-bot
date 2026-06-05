@@ -3,6 +3,7 @@ package com.susstock;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.enchantments.Enchantment;
@@ -16,7 +17,7 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.event.inventory.PrepareSmithingEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerPortalEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -335,12 +336,14 @@ public class SusStock extends JavaPlugin implements Listener {
     }
 
     @EventHandler
-    public void onPortal(PlayerPortalEvent e) {
-        String c = e.getCause().name();
-        if (c.contains("NETHER") && !netherUnlocked) {
+    public void onTeleport(PlayerTeleportEvent e) {
+        // Block ANY teleport into a locked dimension — portals, ender pearls, chorus fruit, /tp, etc.
+        if (e.getTo() == null || e.getTo().getWorld() == null) return;
+        World.Environment env = e.getTo().getWorld().getEnvironment();
+        if (env == World.Environment.NETHER && !netherUnlocked) {
             e.setCancelled(true);
             e.getPlayer().sendMessage("§c🔒 The Nether is locked! Unlock it on the website (Server Unlocks).");
-        } else if (c.contains("END") && !endUnlocked) {
+        } else if (env == World.Environment.THE_END && !endUnlocked) {
             e.setCancelled(true);
             e.getPlayer().sendMessage("§c🔒 The End is locked! Unlock it on the website (Server Unlocks).");
         }

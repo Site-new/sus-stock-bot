@@ -242,14 +242,11 @@ public class SusStock extends JavaPlugin implements Listener {
     private static final String[] ROMAN = {"", "I", "II", "III", "IV", "V"};
 
     private String prettyEnchant(String token) {
-        String[] parts = token.split(":");
-        String name = parts[0].replace("_", " ");
+        String name = token.split(":")[0].replace("_", " ");
         StringBuilder sb = new StringBuilder();
         for (String w : name.split(" "))
             if (!w.isEmpty()) sb.append(Character.toUpperCase(w.charAt(0))).append(w.substring(1)).append(" ");
-        String lvl = "";
-        try { int l = Integer.parseInt(parts[1]); lvl = (l < ROMAN.length) ? ROMAN[l] : String.valueOf(l); } catch (Exception ignored) {}
-        return sb.toString().trim() + (lvl.isEmpty() ? "" : " " + lvl);
+        return sb.toString().trim();
     }
 
     private void openEnchantMenu(Player p, java.util.List<String> tokens) {
@@ -261,8 +258,8 @@ public class SusStock extends JavaPlugin implements Listener {
             ItemStack book = new ItemStack(Material.ENCHANTED_BOOK);
             ItemMeta meta = book.getItemMeta();
             if (meta != null) {
-                meta.setDisplayName("§b" + prettyEnchant(tokens.get(i)));
-                meta.setLore(java.util.Arrays.asList("§7Click to apply to the item in your hand"));
+                meta.setDisplayName("§b" + prettyEnchant(tokens.get(i)) + " §7+1");
+                meta.setLore(java.util.Arrays.asList("§7Click to add +1 level to the item in your hand"));
                 book.setItemMeta(meta);
             }
             inv.setItem(i, book);
@@ -297,18 +294,16 @@ public class SusStock extends JavaPlugin implements Listener {
             p.sendMessage("§c" + prettyEnchant(token) + " can't go on a " + held.getType().name().toLowerCase().replace("_", " ") + ".");
             return;
         }
-        int level;
-        try { level = Integer.parseInt(parts[1]); } catch (Exception ex) { level = 1; }
-        final int flevel = level;
-        // Consume server-side, then apply
+        // Consume server-side, then apply (+1 level over what's already on the item)
         runAsync(() -> {
             String resp = post("/api/mc/use_enchant", "{\"uuid\":\"" + p.getUniqueId() + "\",\"token\":\"" + esc(token) + "\"}");
             if (resp == null || !resp.contains("\"ok\"")) { p.sendMessage("§cCouldn't apply that enchant."); return; }
             Bukkit.getScheduler().runTask(this, () -> {
                 ItemStack cur = p.getInventory().getItemInMainHand();
                 if (cur == null || cur.getType() == Material.AIR) { p.sendMessage("§cYou're no longer holding an item."); return; }
-                cur.addUnsafeEnchantment(ench, flevel);
-                p.sendMessage("§a✨ Applied " + prettyEnchant(token) + " to your " + cur.getType().name().toLowerCase().replace("_", " ") + "!");
+                int newLevel = cur.getEnchantmentLevel(ench) + 1;
+                cur.addUnsafeEnchantment(ench, newLevel);
+                p.sendMessage("§a✨ " + prettyEnchant(token) + " → now level " + newLevel + " on your " + cur.getType().name().toLowerCase().replace("_", " ") + "!");
                 tokens.remove(token);
                 if (tokens.isEmpty()) {
                     p.closeInventory();

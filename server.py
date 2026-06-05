@@ -1875,15 +1875,15 @@ def mc_uuid_for(data, discord_id):
 
 # Enchantments players can buy (applied to the item they're holding). Keys are vanilla.
 ENCHANTS = {
-    "sharpness":       {"name": "⚔️ Sharpness V",       "key": "sharpness",       "level": 5, "cost": 8000},
-    "protection":      {"name": "🛡️ Protection IV",     "key": "protection",      "level": 4, "cost": 8000},
-    "efficiency":      {"name": "⛏️ Efficiency V",       "key": "efficiency",      "level": 5, "cost": 6000},
-    "unbreaking":      {"name": "🔧 Unbreaking III",     "key": "unbreaking",      "level": 3, "cost": 5000},
+    "sharpness":       {"name": "⚔️ Sharpness +1",       "key": "sharpness",       "level": 1, "cost": 8000},
+    "protection":      {"name": "🛡️ Protection +1",     "key": "protection",      "level": 1, "cost": 8000},
+    "efficiency":      {"name": "⛏️ Efficiency +1",       "key": "efficiency",      "level": 1, "cost": 6000},
+    "unbreaking":      {"name": "🔧 Unbreaking +1",     "key": "unbreaking",      "level": 1, "cost": 5000},
     "mending":         {"name": "💚 Mending",            "key": "mending",         "level": 1, "cost": 15000},
-    "fortune":         {"name": "💎 Fortune III",        "key": "fortune",         "level": 3, "cost": 10000},
-    "looting":         {"name": "🍖 Looting III",        "key": "looting",         "level": 3, "cost": 8000},
-    "power":           {"name": "🏹 Power V",            "key": "power",           "level": 5, "cost": 7000},
-    "feather_falling": {"name": "🪶 Feather Falling IV", "key": "feather_falling", "level": 4, "cost": 5000},
+    "fortune":         {"name": "💎 Fortune +1",        "key": "fortune",         "level": 1, "cost": 10000},
+    "looting":         {"name": "🍖 Looting +1",        "key": "looting",         "level": 1, "cost": 8000},
+    "power":           {"name": "🏹 Power +1",            "key": "power",           "level": 1, "cost": 7000},
+    "feather_falling": {"name": "🪶 Feather Falling +1", "key": "feather_falling", "level": 1, "cost": 5000},
 }
 
 
@@ -2726,7 +2726,7 @@ DASHBOARD_HTML = """
 
     <div id="store-enchant-section" style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px;display:none">
       <div style="font-weight:700;margin-bottom:4px">✨ Enchant Held Item</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Buy enchants here, then in Minecraft run <code style="background:var(--bg);padding:1px 5px;border-radius:4px">/susenchant</code> to open a menu — hold an item and click an enchant to apply it.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Each adds <b>+1 level</b>. Buy more of the same and apply them to one item to raise the level. In Minecraft run <code style="background:var(--bg);padding:1px 5px;border-radius:4px">/susenchant</code>, hold an item, and click to apply.</div>
       <div id="store-enchants" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
     </div>
 

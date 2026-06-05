@@ -262,16 +262,47 @@ def api_stock():
 def api_leaderboard():
     data = load_data()
     price = data["stock_price"]
-    users = []
+    rows = []
     for uid, u in data["users"].items():
         invested = round(u["shares"] * price, 2)
         net_worth = round(u["balance"] + invested, 2)
         username = get_discord_username(uid)
-        users.append({"id": uid, "username": username, "shares": u["shares"], "cash": u["balance"],
-                      "invested": invested, "net_worth": net_worth,
-                      "pnl": round(net_worth - STARTING_BALANCE, 2)})
-    users.sort(key=lambda x: x["net_worth"], reverse=True)
-    return jsonify(users)
+        rows.append({"id": uid, "username": username, "shares": u["shares"], "cash": u["balance"],
+                     "invested": invested, "net_worth": net_worth,
+                     "pnl": round(net_worth - STARTING_BALANCE, 2), "is_company": False})
+    # Include companies, ranked by total value, showing their CEO
+    try:
+        from companies import load_companies as _lc, company_value as _cv
+        for c in _lc().values():
+            ceo_name = get_discord_username(c.get("ceo")) or "Unknown"
+            rows.append({
+                "id": c["id"], "username": f"{c['name']} ({c['ticker']})",
+                "shares": c.get("sus_shares", 0), "cash": c.get("treasury", 0),
+                "invested": round(c.get("sus_shares", 0) * price, 2),
+                "net_worth": _cv(c, price), "pnl": 0,
+                "is_company": True, "ceo": ceo_name,
+            })
+    except Exception:
+        pass
+    rows.sort(key=lambda x: x["net_worth"], reverse=True)
+    return jsonify(rows)
+
+
+@app.route("/api/act_as", methods=["POST"])
+def api_act_as():
+    """CEO toggles trading on behalf of a company (or '' for personal)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    cid = str(request.json.get("company_id", "") or "")
+    if not cid:
+        session.pop("acting_as", None)
+        return jsonify({"ok": True, "acting_as": None})
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "you must be the CEO"}), 403
+    session["acting_as"] = cid
+    return jsonify({"ok": True, "acting_as": cid})
 
 
 @app.route("/api/me")
@@ -282,9 +313,37 @@ def api_me():
     u = get_user(data, session["user_id"])
     save_data(data)
     price = data["stock_price"]
+    uid = session["user_id"]
+
+    # Companies this user is CEO of (for the "trade as" selector)
+    companies = load_companies()
+    my_companies = [{"id": c["id"], "name": c["name"], "ticker": c["ticker"]}
+                    for c in companies.values() if is_ceo(c, uid)]
+
+    # Validate acting_as
+    acting_id = session.get("acting_as")
+    acting = companies.get(acting_id) if acting_id else None
+    if acting and not is_ceo(acting, uid):
+        acting = None
+        session.pop("acting_as", None)
+
+    if acting:
+        # Report the company's position instead of the user's
+        invested = round(acting.get("sus_shares", 0) * price, 2)
+        cash = round(acting.get("treasury", 0), 2)
+        net_worth = round(cash + invested, 2)
+        return jsonify({
+            "username": session["username"], "avatar": session.get("avatar"), "user_id": uid,
+            "shares": acting.get("sus_shares", 0), "cash": cash, "invested": invested,
+            "net_worth": net_worth, "pnl": 0, "price": price,
+            "short": None, "short_pnl": None, "limit_orders": [],
+            "verified": u.get("verified", False), "is_admin": is_admin(),
+            "acting_as": {"id": acting["id"], "name": acting["name"], "ticker": acting["ticker"]},
+            "my_companies": my_companies,
+        })
+
     invested = round(u["shares"] * price, 2)
     net_worth = round(u["balance"] + invested, 2)
-    uid = session["user_id"]
     short = data.get("shorts", {}).get(uid)
     short_pnl = round((short["entry_price"] - price) * short["shares"], 2) if short else None
     limit_orders = [o for o in data.get("limit_orders", []) if o["user_id"] == uid]
@@ -303,6 +362,8 @@ def api_me():
         "limit_orders": limit_orders,
         "verified": u.get("verified", False),
         "is_admin": is_admin(),
+        "acting_as": None,
+        "my_companies": my_companies,
     })
 
 
@@ -314,9 +375,18 @@ def api_buy():
     if shares <= 0:
         return jsonify({"error": "invalid amount"}), 400
     data = load_data()
-    u = get_user(data, session["user_id"])
     price = data["stock_price"]
     cost = round(price * shares, 2)
+    companies = load_companies()
+    acting, acting_id = get_acting_company(companies)
+    if acting:
+        if acting["treasury"] < cost:
+            return jsonify({"error": f"Company needs {fmt(cost)}, has {fmt(acting['treasury'])}"}), 400
+        acting["treasury"] = round(acting["treasury"] - cost, 2)
+        acting["sus_shares"] = acting.get("sus_shares", 0) + shares
+        save_companies(companies)
+        return jsonify({"ok": True, "bought": shares, "cost": cost, "balance": acting["treasury"], "shares": acting["sus_shares"]})
+    u = get_user(data, session["user_id"])
     if u["balance"] < cost:
         return jsonify({"error": f"Not enough cash. Need {fmt(cost)}, have {fmt(u['balance'])}"}), 400
     u["balance"] = round(u["balance"] - cost, 2)
@@ -334,8 +404,18 @@ def api_sell():
     if shares <= 0:
         return jsonify({"error": "invalid amount"}), 400
     data = load_data()
-    u = get_user(data, session["user_id"])
     price = data["stock_price"]
+    earnings = round(price * shares, 2)
+    companies = load_companies()
+    acting, acting_id = get_acting_company(companies)
+    if acting:
+        if acting.get("sus_shares", 0) < shares:
+            return jsonify({"error": f"Company only has {acting.get('sus_shares', 0)} shares"}), 400
+        acting["sus_shares"] -= shares
+        acting["treasury"] = round(acting["treasury"] + earnings, 2)
+        save_companies(companies)
+        return jsonify({"ok": True, "sold": shares, "earnings": earnings, "balance": acting["treasury"], "shares": acting["sus_shares"]})
+    u = get_user(data, session["user_id"])
     if u["shares"] < shares:
         return jsonify({"error": f"You only have {u['shares']} shares"}), 400
     earnings = round(price * shares, 2)
@@ -626,6 +706,17 @@ def user_in_insider_ring(user_id):
     except Exception:
         pass
     return False
+
+
+def get_acting_company(companies):
+    """Return (company_dict, company_id) the CEO is currently trading as, or (None, None)."""
+    acting_id = session.get("acting_as")
+    if not acting_id:
+        return None, None
+    c = companies.get(acting_id)
+    if c and is_ceo(c, session.get("user_id")):
+        return c, acting_id
+    return None, None
 
 
 def enrich_company(c, sus_price):
@@ -1693,17 +1784,28 @@ async function fetchMe() {
     loadAdmin();
   }
 
+  const actingId = u.acting_as ? u.acting_as.id : '';
+  const myCompanies = u.my_companies || [];
   document.getElementById('portfolio-area').innerHTML = `
+    ${myCompanies.length ? `<div style="margin-bottom:10px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">Trading As</div>
+      <select id="act-as-select" onchange="setActAs(this.value)" class="trade-input" style="margin-bottom:0;${u.acting_as?'border-color:var(--accent);color:var(--accent);font-weight:700':''}">
+        <option value="" ${!actingId?'selected':''}>👤 ${u.username} (personal)</option>
+        ${myCompanies.map(c => `<option value="${c.id}" ${actingId===c.id?'selected':''}>🏢 ${c.name} (${c.ticker})</option>`).join('')}
+      </select>
+    </div>` : ''}
+    ${u.acting_as ? `<div style="background:#5865f222;border:1px solid var(--accent);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px;font-weight:700;color:var(--accent)">🏢 Trading on behalf of ${u.acting_as.name} — treasury & SUS holdings</div>` : ''}
     <div class="portfolio-grid">
-      <div class="p-stat"><div class="p-stat-label">Net Worth</div><div class="p-stat-value">${fmt(u.net_worth)}</div></div>
-      <div class="p-stat"><div class="p-stat-label">P&L</div><div class="p-stat-value" style="color:${pnlColor}">${u.pnl>=0?'+':''}${fmt(u.pnl)}</div></div>
+      <div class="p-stat"><div class="p-stat-label">${u.acting_as?'Company Value':'Net Worth'}</div><div class="p-stat-value">${fmt(u.net_worth)}</div></div>
+      ${u.acting_as ? `<div class="p-stat"><div class="p-stat-label">Treasury</div><div class="p-stat-value">${fmt(u.cash)}</div></div>`
+        : `<div class="p-stat"><div class="p-stat-label">P&L</div><div class="p-stat-value" style="color:${pnlColor}">${u.pnl>=0?'+':''}${fmt(u.pnl)}</div></div>`}
       <div class="p-stat"><div class="p-stat-label">SUS Shares</div><div class="p-stat-value" id="my-shares">${u.shares}</div></div>
-      <div class="p-stat"><div class="p-stat-label">Cash</div><div class="p-stat-value" id="my-cash">${fmt(u.cash)}</div></div>
+      <div class="p-stat"><div class="p-stat-label">${u.acting_as?'Treasury Cash':'Cash'}</div><div class="p-stat-value" id="my-cash">${fmt(u.cash)}</div></div>
       <div class="p-stat" style="grid-column:span 2"><div class="p-stat-label">Invested Value</div><div class="p-stat-value" id="my-invested">${fmt(u.invested)}</div></div>
     </div>
     <!-- Trading tabs -->
     <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">
-      ${(u.verified ? ['Buy','Sell','Short','Limits','Send'] : ['Buy','Sell','Short','Limits']).map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="zoom-btn ${t==='Buy'?'active':''}" style="flex:1">${t}</button>`).join('')}
+      ${(u.acting_as ? ['Buy','Sell'] : (u.verified ? ['Buy','Sell','Short','Limits','Send'] : ['Buy','Sell','Short','Limits'])).map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="zoom-btn ${t==='Buy'?'active':''}" style="flex:1">${t}</button>`).join('')}
     </div>
     ${u.verified ? '<div style="font-size:10px;color:var(--green);font-weight:700;margin-bottom:8px">✓ VERIFIED ACCOUNT</div>' : ''}
 
@@ -1763,6 +1865,8 @@ async function fetchMe() {
 
 let activeTab = 'buy';
 function setTab(tab) {
+  // Fall back to buy if the requested tab isn't present (e.g. company mode)
+  if (!document.getElementById('tab-'+tab+'-content')) tab = 'buy';
   activeTab = tab;
   ['buy','sell','short','limits','send'].forEach(t => {
     const el = document.getElementById('tab-'+t+'-content');
@@ -1791,6 +1895,15 @@ async function sendMoney() {
   if (!res.ok) { showToast(d.error, false); return; }
   showToast(`Sent ${fmt(amount)}!`);
   document.getElementById('send-amount').value = '';
+  fetchMe();
+}
+
+async function setActAs(companyId) {
+  const res = await fetch('/api/act_as', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({company_id: companyId})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(companyId ? 'Now trading as company' : 'Back to personal trading');
+  activeTab = 'buy';
   fetchMe();
 }
 
@@ -1858,15 +1971,24 @@ async function fetchLeaderboard() {
   const users = await fetch('/api/leaderboard').then(r => r.json());
   const el = document.getElementById('leaderboard');
   if (!users.length) { el.textContent = 'No traders yet.'; return; }
-  el.innerHTML = users.slice(0,10).map((u,i) => `
-    <div class="lb-row ${u.id === myUserId ? 'lb-me' : ''}">
+  el.innerHTML = users.slice(0,15).map((u,i) => {
+    let name, sub;
+    if (u.is_company) {
+      name = `🏢 ${u.username}`;
+      sub = `CEO: ${u.ceo || 'Unknown'} · ${u.shares} SUS`;
+    } else {
+      name = u.id === myUserId ? '⭐ ' + (u.username || 'You') : (u.username || 'Trader #'+u.id.slice(-4));
+      sub = `${u.pnl>=0?'+':''}${fmt(u.pnl)} · ${u.shares} shares`;
+    }
+    return `<div class="lb-row ${u.id === myUserId ? 'lb-me' : ''}">
       <div class="lb-rank">${medals[i] || '#'+(i+1)}</div>
       <div style="flex:1;min-width:0">
-        <div class="lb-name">${u.id === myUserId ? '⭐ ' + (u.username || 'You') : (u.username || 'Trader #'+u.id.slice(-4))}</div>
-        <div class="lb-pnl ${u.pnl>=0?'pos':'neg'}">${u.pnl>=0?'+':''}${fmt(u.pnl)} · ${u.shares} shares</div>
+        <div class="lb-name">${name}</div>
+        <div class="lb-pnl ${u.is_company ? '' : (u.pnl>=0?'pos':'neg')}" style="${u.is_company?'color:var(--muted)':''}">${sub}</div>
       </div>
       <div class="lb-worth">${fmt(u.net_worth)}</div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   document.getElementById('lb-updated').textContent = 'Updated: ' + new Date().toLocaleTimeString();
 }
 

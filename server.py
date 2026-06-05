@@ -294,6 +294,51 @@ def admin_fire_news():
     return jsonify({"ok": True, "headline": headline, "impact": impact})
 
 
+@app.route("/api/admin/lottery", methods=["POST"])
+def admin_lottery():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    import random as _r
+    action = request.json.get("action", "")
+    data = load_data()
+    lot = data.get("lottery") or {"open": False, "ends_at": 0, "next_open": 0, "pot": 0, "tickets": {}}
+    now = int(time.time())
+    news = data.setdefault("news_feed", [])
+    if action == "start":
+        lot = {"open": True, "ends_at": now + 600, "next_open": 0, "pot": 0, "tickets": {}}
+        news.append({"headline": "🎟️ LOTTERY OPEN for 10 minutes! Buy tickets on the website.",
+                     "positive": True, "impact": 0, "ts": now, "public_at": now, "kind": "announcement"})
+    elif action == "draw":
+        tickets = lot.get("tickets", {})
+        pot = round(lot.get("pot", 0), 2)
+        pool = [uid for uid, c in tickets.items() for _ in range(int(c))]
+        if pool and pot > 0:
+            winner = _r.choice(pool)
+            wu = get_user(data, winner)
+            wu["balance"] = round(wu["balance"] + pot, 2)
+            wname = get_discord_username(winner) or "A player"
+            news.append({"headline": f"🎟️ LOTTERY: {wname} won {fmt(pot)} with {tickets.get(winner,0)} tickets!",
+                         "positive": True, "impact": 0, "ts": now, "public_at": now, "kind": "announcement"})
+            add_notification(data, winner, f"🎟️ You WON the lottery — {fmt(pot)}!", True)
+        else:
+            news.append({"headline": "🎟️ LOTTERY: No tickets sold — no winner.", "positive": False,
+                         "impact": 0, "ts": now, "public_at": now, "kind": "announcement"})
+        lot = {"open": False, "ends_at": 0, "next_open": now + 7200, "pot": 0, "tickets": {}}
+    elif action == "cancel":
+        for uid, c in lot.get("tickets", {}).items():
+            if uid in data["users"]:
+                data["users"][uid]["balance"] = round(data["users"][uid]["balance"] + c * LOTTERY_TICKET_PRICE, 2)
+        lot = {"open": False, "ends_at": 0, "next_open": now + 7200, "pot": 0, "tickets": {}}
+        news.append({"headline": "🎟️ Lottery round cancelled — tickets refunded.", "positive": False,
+                     "impact": 0, "ts": now, "public_at": now, "kind": "announcement"})
+    else:
+        return jsonify({"error": "unknown action"}), 400
+    data["news_feed"] = news[-50:]
+    data["lottery"] = lot
+    save_data(data)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/admin/ban", methods=["POST"])
 def admin_ban():
     if not is_admin():
@@ -3827,6 +3872,15 @@ async function loadAdmin() {
         <button class="btn btn-buy" onclick="adminFireNews()">📰 Fire Random News</button>
       </div>
 
+      <div style="margin-bottom:14px">
+        <div class="stat-label" style="margin-bottom:6px">Lottery</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-buy" onclick="adminLottery('start')">🎟️ Start Round</button>
+          <button class="btn btn-discord" onclick="adminLottery('draw')">🎲 Draw Now</button>
+          <button class="btn btn-sell" onclick="adminLottery('cancel')">✖ Cancel (refund)</button>
+        </div>
+      </div>
+
       <div style="margin-bottom:14px;border:1px solid #ed424540;border-radius:8px;padding:10px">
         <div class="stat-label" style="margin-bottom:6px;color:#ed4245">⚠️ Danger Zone</div>
         <button class="btn btn-sell" style="width:100%;background:#ed424540" onclick="adminResetMarket()">🔄 Reset Entire Market</button>
@@ -3903,6 +3957,14 @@ async function adminBan(uid, minutes, name) {
   const res = await fetch('/api/admin/ban', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid, minutes}) });
   const d = await res.json();
   if (d.ok) { showToast(`${name} ${d.result}`); loadAdmin(); }
+}
+
+async function adminLottery(action) {
+  if (action === 'cancel' && !confirm('Cancel the current lottery and refund all tickets?')) return;
+  const res = await fetch('/api/admin/lottery', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action}) });
+  const d = await res.json();
+  if (d.ok) { showToast('Lottery ' + action + ' done'); }
+  else { showToast(d.error || 'Failed', false); }
 }
 
 async function adminFireNews() {

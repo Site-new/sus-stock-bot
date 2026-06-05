@@ -250,6 +250,13 @@ def api_stock():
     else:
         news = [n for n in all_news if n.get("public_at", n.get("ts", 0)) <= now][-10:]
 
+    # Merge in this user's personal notifications (e.g. money received)
+    if session.get("user_id"):
+        personal = data.get("notifications", {}).get(session["user_id"], [])
+        news = (news + personal)
+        news.sort(key=lambda n: n.get("ts", 0))
+        news = news[-15:]
+
     return jsonify({
         "price": price, "change": change, "change_pct": pct,
         "history": history[-100:], "timestamps": timestamps,
@@ -560,6 +567,15 @@ def log_transaction(data, user_id, kind, detail, amount):
     hist[str(user_id)] = user_hist[-100:]  # keep last 100 per user
 
 
+def add_notification(data, user_id, headline, positive=True):
+    """Add a personal notification shown in that user's news feed only."""
+    notifs = data.setdefault("notifications", {})
+    user_notifs = notifs.setdefault(str(user_id), [])
+    user_notifs.append({"headline": headline, "positive": positive,
+                        "impact": 0, "ts": int(time.time()), "kind": "personal"})
+    notifs[str(user_id)] = user_notifs[-20:]
+
+
 @app.route("/api/history")
 def api_history():
     if "user_id" not in session:
@@ -605,6 +621,11 @@ def api_send_money():
     sender = get_user(data, session["user_id"])
     if not sender.get("verified"):
         return jsonify({"error": "Only verified accounts can send money"}), 403
+    now = int(time.time())
+    last_send = sender.get("last_send", 0)
+    if now - last_send < 120:
+        remain = 120 - (now - last_send)
+        return jsonify({"error": f"You can send again in {remain}s"}), 429
     recipient_id = str(request.json.get("recipient_id", ""))
     amount = float(request.json.get("amount", 0))
     if amount <= 0:
@@ -620,10 +641,12 @@ def api_send_money():
         return jsonify({"error": "not enough cash"}), 400
     sender["balance"] = round(sender["balance"] - amount, 2)
     recipient["balance"] = round(recipient["balance"] + amount, 2)
+    sender["last_send"] = now
     recip_name = get_discord_username(recipient_id) or f"User #{recipient_id[-4:]}"
     sender_name = session.get("username", "Someone")
     log_transaction(data, session["user_id"], "send", f"Sent to {recip_name}", -amount)
     log_transaction(data, recipient_id, "receive", f"Received from {sender_name}", amount)
+    add_notification(data, recipient_id, f"💸 You received {fmt(amount)} from {sender_name}!", True)
     save_data(data)
     return jsonify({"ok": True, "balance": sender["balance"]})
 
@@ -1382,6 +1405,39 @@ def api_company_pay_protection(cid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/companies/<cid>/gamble", methods=["POST"])
+def api_company_gamble(cid):
+    """Double-or-nothing against a Casino's treasury (47% win = 6% house edge)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    bet = float(request.json.get("bet", 0))
+    if bet <= 0:
+        return jsonify({"error": "invalid bet"}), 400
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or c["type"] != "casino":
+        return jsonify({"error": "not a casino"}), 400
+    data = load_data()
+    u = get_user(data, session["user_id"])
+    if u["balance"] < bet:
+        return jsonify({"error": "not enough cash"}), 400
+    if c["treasury"] < bet:
+        return jsonify({"error": "casino can't cover that bet"}), 400
+    import random as _r
+    win = _r.random() < 0.47
+    if win:
+        u["balance"] = round(u["balance"] + bet, 2)
+        c["treasury"] = round(c["treasury"] - bet, 2)
+        log_transaction(data, session["user_id"], "receive", f"🎰 Won at {c['ticker']} casino", bet)
+    else:
+        u["balance"] = round(u["balance"] - bet, 2)
+        c["treasury"] = round(c["treasury"] + bet, 2)
+        log_transaction(data, session["user_id"], "send", f"🎰 Lost at {c['ticker']} casino", -bet)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True, "win": win, "bet": bet, "balance": u["balance"]})
+
+
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -1832,7 +1888,7 @@ async function fetchStock() {
         const isEarly = d.is_insider && publicAt > nowSec;
         const earlyBadge = isEarly ? ` <span style="font-size:9px;font-weight:700;background:#5865f2;color:#fff;padding:1px 5px;border-radius:999px">EARLY</span> <span class="event-countdown" data-public="${publicAt}" style="font-size:10px;font-weight:700;color:#5865f2">⏳ --:--</span>` : '';
         return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;${isEarly?'background:#5865f211;border-radius:6px;padding:8px':''}">
-          <span style="font-size:18px;flex-shrink:0">${n.kind === 'announcement' ? '📢' : (n.positive ? '📈' : '📉')}</span>
+          <span style="font-size:18px;flex-shrink:0">${n.kind === 'personal' ? '💸' : (n.kind === 'announcement' ? '📢' : (n.positive ? '📈' : '📉'))}</span>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;line-height:1.4">${n.headline}${impact}${earlyBadge}</div>
             <div style="font-size:10px;color:var(--muted);margin-top:2px">${t}</div>
@@ -1879,7 +1935,14 @@ async function fetchMe() {
 
   const actingId = u.acting_as ? u.acting_as.id : '';
   const myCompanies = u.my_companies || [];
-  document.getElementById('portfolio-area').innerHTML = `
+
+  // Preserve any values the user has typed, plus which field is focused
+  const portfolioArea = document.getElementById('portfolio-area');
+  const savedInputs = {};
+  portfolioArea.querySelectorAll('input, select').forEach(el => { if (el.id) savedInputs[el.id] = el.value; });
+  const focusedId = document.activeElement && document.activeElement.closest && document.activeElement.closest('#portfolio-area') ? document.activeElement.id : null;
+
+  portfolioArea.innerHTML = `
     ${myCompanies.length ? `<div style="margin-bottom:10px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">Trading As</div>
       <select id="act-as-select" onchange="setActAs(this.value)" class="trade-input" style="margin-bottom:0;${u.acting_as?'border-color:var(--accent);color:var(--accent);font-weight:700':''}">
@@ -1951,6 +2014,12 @@ async function fetchMe() {
       <input type="number" id="send-amount" class="trade-input" placeholder="Amount" min="1"/>
       <button class="btn btn-discord" style="width:100%" onclick="sendMoney()">📤 Send Money</button>
     </div>` : ''}`;
+  // Restore typed values and focus after re-render
+  Object.keys(savedInputs).forEach(id => {
+    const el = document.getElementById(id);
+    if (el && savedInputs[id]) el.value = savedInputs[id];
+  });
+  if (focusedId) { const fe = document.getElementById(focusedId); if (fe) fe.focus(); }
   // Restore the previously active tab after re-render
   setTab(activeTab);
   if (u.verified) loadRecipients();
@@ -2201,7 +2270,7 @@ async function loadHistory() {
 }
 
 // ── Companies drawer ───────────────────────────────────────────────────────────
-const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 3% every 20min on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."}};
+const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 3% every 20min on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."}};
 let companiesOpen = false;
 let detailOpen = false;
 let dcSelectedType = null;
@@ -2394,6 +2463,15 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       <div style="font-size:12px;font-weight:700;margin-bottom:4px">💳 Investment Bank</div>
       <div style="font-size:11px;color:var(--muted)">Earns a 3% commission on <b>every company stock trade</b> across the whole market, paid into this treasury automatically. Treasury: <b>${fmt(c.treasury)}</b>.</div>
     </div>`;
+    case 'casino': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🎰 Casino — Double or Nothing</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Bet against the house: 47% chance to <b>double your bet</b>, 53% to lose it. Casino bankroll: <b>${fmt(c.treasury)}</b>.</div>
+      <div id="casino-result" style="font-size:14px;font-weight:800;text-align:center;margin-bottom:8px;min-height:20px"></div>
+      <div style="display:flex;gap:6px">
+        <input type="number" id="d-bet" class="trade-input" placeholder="Bet amount" min="1" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-buy" onclick="dGamble('${cid}')">🎲 Gamble</button>
+      </div>
+    </div>`;
     case 'lending_bank': return `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Loans (20% interest)</div>
       ${c._my_loan ? `<div style="color:var(--red);margin-bottom:6px;font-size:13px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-sell" style="width:100%" onclick="dRepayLoan('${cid}')">Repay Loan</button>`
@@ -2484,6 +2562,21 @@ async function dPostBounty(cid) { const t=document.getElementById('d-bounty-targ
 async function dSetSpread(cid) { const b=parseFloat(document.getElementById('d-spread-buy')?.value),s=parseFloat(document.getElementById('d-spread-sell')?.value); await dAction(`/api/companies/${cid}/set_spread`,{buy:b,sell:s},'Spread set!',cid); }
 async function dMmTrade(cid,action) { const s=parseInt(document.getElementById('d-mm-shares')?.value); if(!s){showToast('Enter shares',false);return;} await dAction(`/api/companies/${cid}/market_trade`,{action,shares:s},'Trade executed',cid); }
 async function dPayProtection(cid) { const a=parseFloat(document.getElementById('d-prot-amt')?.value||100); await dAction(`/api/companies/${cid}/pay_protection`,{amount:a},'Protection paid.',cid); }
+async function dGamble(cid) {
+  const bet = parseFloat(document.getElementById('d-bet')?.value);
+  if (!bet || bet <= 0) { showToast('Enter a bet', false); return; }
+  const res = await fetch(`/api/companies/${cid}/gamble`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({bet})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  const resEl = document.getElementById('casino-result');
+  if (resEl) {
+    resEl.textContent = d.win ? `🎉 WIN! +${fmt(d.bet)}` : `💀 LOST ${fmt(d.bet)}`;
+    resEl.style.color = d.win ? 'var(--green)' : 'var(--red)';
+  }
+  showToast(d.win ? `You won ${fmt(d.bet)}!` : `You lost ${fmt(d.bet)}`, d.win);
+  loadDrawerCompanies();
+  fetchMe();
+}
 async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`,{},'Subscribed to insider ring!',cid); }
 async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }

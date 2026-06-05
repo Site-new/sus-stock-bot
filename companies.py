@@ -22,6 +22,7 @@ COMPANY_TYPES = {
     "market_maker":   {"name": "Market Maker",           "emoji": "⚖️", "desc": "Set a buy/sell spread. Users trade with you instead of the market."},
     "sus_mafia":      {"name": "Sus Mafia",              "emoji": "🤌", "desc": "Charge protection from other companies. Pay or get shorted."},
     "wolf_pack":      {"name": "Wolf Pack",              "emoji": "🐺", "desc": "Mass buy votes amplify price 3×. Profits shared equally."},
+    "casino":         {"name": "Casino",                 "emoji": "🎰", "desc": "Players gamble against your treasury. House edge earns you money."},
 }
 
 

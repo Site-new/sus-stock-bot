@@ -1696,6 +1696,11 @@ def companies_page():
     return render_template_string(COMPANIES_HTML)
 
 
+@app.route("/guide")
+def guide_page():
+    return render_template_string(GUIDE_HTML)
+
+
 DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -1819,6 +1824,7 @@ DASHBOARD_HTML = """
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
+  <a href="/guide" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px;text-decoration:none">📖 Guide</a>
   <button onclick="openStore()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🛒 Store</button>
   <button onclick="toggleHistory()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">📜 History</button>
   <button onclick="toggleCompanies()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🏢 Companies</button>
@@ -3484,6 +3490,238 @@ async function submitCreate() {
 init();
 setInterval(loadCompanies, 30000);
 </script>
+</body>
+</html>
+"""
+
+GUIDE_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Sus Stock — Company Guide</title>
+<style>
+  :root{--bg:#1e1f22;--surface:#2b2d31;--surface2:#313338;--accent:#5865f2;--green:#57f287;--red:#ed4245;--text:#dbdee1;--muted:#949ba4;--border:#3a3c40;}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;line-height:1.6}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10}
+  header h1{font-size:20px;font-weight:700}
+  a.nav{color:var(--accent);text-decoration:none;font-size:13px;font-weight:700}
+  .wrap{max-width:860px;margin:0 auto;padding:28px 24px 80px}
+  h2{font-size:22px;margin:28px 0 8px;border-bottom:1px solid var(--border);padding-bottom:8px}
+  h3{font-size:17px;margin:20px 0 4px;display:flex;align-items:center;gap:8px}
+  p{color:var(--text);margin:6px 0;font-size:14px}
+  .muted{color:var(--muted);font-size:13px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin:14px 0}
+  .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;margin-right:6px}
+  .tag.passive{background:#57f28722;color:var(--green)}
+  .tag.active{background:#5865f222;color:var(--accent)}
+  .tag.risk{background:#ed424522;color:var(--red)}
+  ul{margin:6px 0 6px 22px}
+  li{font-size:14px;margin:3px 0}
+  code{background:var(--surface2);padding:1px 6px;border-radius:5px;font-size:13px}
+  .toc{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;margin:14px 0}
+  .toc a{color:var(--text);text-decoration:none;font-size:13px;background:var(--surface2);padding:7px 10px;border-radius:8px;border:1px solid var(--border)}
+  .toc a:hover{border-color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <span style="font-size:22px">📖</span>
+  <h1>Company Guide</h1>
+  <a href="/" class="nav">← Back to Market</a>
+</header>
+<div class="wrap">
+
+<h2>How companies work (the basics)</h2>
+<div class="card">
+  <p><b>Founding:</b> Anyone can found a company for <code>$2,000</code>. You become the CEO and start owning all 1,000 shares.</p>
+  <p><b>Company stock:</b> Each company issues tradeable shares. The price is <code>company value ÷ shares issued</code>, where <b>company value = treasury cash + (SUS shares the company holds × SUS price)</b>.</p>
+  <p><b>Treasury:</b> A shared pot of cash. Members deposit into it, services earn into it, and the CEO can trade SUS with it. A bigger treasury = higher stock price = richer shareholders.</p>
+  <p><b>Investing:</b> Buy a company's stock; if its value grows (smart CEO trades, passive earnings, etc.), your shares are worth more and you sell for profit.</p>
+  <p><b>Trading as a company:</b> A CEO can switch the main trading menu to act on the company's behalf — buying, selling, and shorting SUS straight from the treasury.</p>
+  <p><b>Tags below:</b> <span class="tag passive">Passive</span> earns automatically · <span class="tag active">Active</span> needs you to act · <span class="tag risk">Risky</span> can lose money.</p>
+</div>
+
+<div class="toc">
+  <a href="#hedge_fund">💼 Hedge Fund</a>
+  <a href="#day_trading">⚡ Day Trading LLC</a>
+  <a href="#index_fund">📊 Index Fund</a>
+  <a href="#insider_ring">🔍 Insider Ring</a>
+  <a href="#short_cartel">🐻 Short Cartel</a>
+  <a href="#pump_dump">🚀 Pump & Dump</a>
+  <a href="#lending_bank">🏦 Lending Bank</a>
+  <a href="#invest_bank">💳 Investment Bank</a>
+  <a href="#savings">🐷 Savings Account</a>
+  <a href="#insurance">🛡️ Insurance</a>
+  <a href="#bounty_hunter">🎯 Bounty Hunter</a>
+  <a href="#market_maker">⚖️ Market Maker</a>
+  <a href="#sus_mafia">🤌 Sus Mafia</a>
+  <a href="#wolf_pack">🐺 Wolf Pack</a>
+  <a href="#casino">🎰 Casino</a>
+</div>
+
+<h2>The 15 company types</h2>
+
+<div class="card" id="hedge_fund">
+  <h3>💼 Hedge Fund <span class="tag active">Active</span></h3>
+  <p>Members pool cash and the CEO trades SUS with it, then shares out the winnings.</p>
+  <ul>
+    <li>Members <b>deposit</b> cash into the treasury.</li>
+    <li>The CEO uses <b>Trade As Company</b> mode to buy/sell/short SUS with the pooled money.</li>
+    <li>The CEO clicks <b>Distribute Profits</b> to split an amount of treasury among members <b>proportional to their deposits</b>.</li>
+  </ul>
+  <p class="muted">Great when you trust the CEO to trade well. Returns scale with how much you deposited.</p>
+</div>
+
+<div class="card" id="day_trading">
+  <h3>⚡ Day Trading LLC <span class="tag active">Active</span></h3>
+  <p>The whole team votes on what to do, and the majority wins.</p>
+  <ul>
+    <li>Members vote <b>Buy</b>, <b>Sell</b>, or <b>Hold</b> each round.</li>
+    <li>When the vote period ends, the majority action auto-executes: Buy spends ~half the treasury on SUS; Sell dumps all the company's SUS.</li>
+  </ul>
+  <p class="muted">Democratic trading — good for active groups that like to debate the market.</p>
+</div>
+
+<div class="card" id="index_fund">
+  <h3>📊 Index Fund <span class="tag passive">Passive</span></h3>
+  <p>A hands-off fund that just rides the market.</p>
+  <ul>
+    <li>Every 20 minutes it <b>automatically buys SUS</b> with any idle treasury cash.</li>
+    <li>No CEO action needed — deposit, hold, and let the fund's value track SUS over time.</li>
+  </ul>
+  <p class="muted">Lowest effort, steady exposure to the market.</p>
+</div>
+
+<div class="card" id="insider_ring">
+  <h3>🔍 Insider Trading Ring <span class="tag passive">Passive income</span></h3>
+  <p>Sell early access to market news as a paid subscription.</p>
+  <ul>
+    <li>The CEO sets an <b>hourly subscription price</b>.</li>
+    <li>Subscribers see every market event (earnings, flash crashes, cycle shifts) <b>5 minutes before the public</b>, with a live countdown — time to trade before the price moves.</li>
+    <li>Subscribers are billed hourly into the treasury. The CEO gets the news free and can <b>grant free access</b> to anyone.</li>
+  </ul>
+  <p class="muted">The most powerful information edge in the game, and a steady earner for the owner.</p>
+</div>
+
+<div class="card" id="short_cartel">
+  <h3>🐻 Short Selling Cartel <span class="tag risk">Risky</span></h3>
+  <p>A club that amplifies its members' short bets.</p>
+  <ul>
+    <li>Members who profit on a SUS short cover get a <b>2× bonus</b>, paid from the cartel treasury.</li>
+    <li>Keep the treasury funded (via deposits) so it can pay out the bonuses.</li>
+  </ul>
+  <p class="muted">Best when the market is trending down and members short aggressively.</p>
+</div>
+
+<div class="card" id="pump_dump">
+  <h3>🚀 Pump &amp; Dump Crew <span class="tag risk">Risky</span></h3>
+  <p>Coordinate to spike the price, then cash out.</p>
+  <ul>
+    <li>Members vote to <b>pump</b> — a majority pushes the price target up ~2×.</li>
+    <li>Then vote to <b>dump</b> — the company sells its SUS into the spike.</li>
+  </ul>
+  <p class="muted">High risk, high drama. Timing the dump is everything.</p>
+</div>
+
+<div class="card" id="lending_bank">
+  <h3>🏦 Lending Bank <span class="tag passive">Passive income</span></h3>
+  <p>Loan cash to players and collect interest.</p>
+  <ul>
+    <li>Players <b>request a loan</b> from the treasury and owe it back with <b>20% interest</b>.</li>
+    <li>Interest is collected automatically each cycle into the treasury.</li>
+  </ul>
+  <p class="muted">Steady income as long as borrowers keep borrowing.</p>
+</div>
+
+<div class="card" id="invest_bank">
+  <h3>💳 Investment Bank <span class="tag passive">Passive income</span></h3>
+  <p>Take a cut of all the trading in the game.</p>
+  <ul>
+    <li>Earns a <b>3% commission</b> on <b>every company stock trade</b> across the whole market, paid straight into the treasury.</li>
+    <li>No action needed — the busier the market, the more it earns.</li>
+  </ul>
+  <p class="muted">Best when lots of company stock is being traded.</p>
+</div>
+
+<div class="card" id="savings">
+  <h3>🐷 Savings Account <span class="tag passive">Passive</span></h3>
+  <p>A safe place to park cash and earn guaranteed interest.</p>
+  <ul>
+    <li>Deposit cash and earn <b>3% every 20 minutes</b>, paid from the treasury.</li>
+    <li>No risk to the depositor — interest is guaranteed while the treasury can pay.</li>
+  </ul>
+  <p class="muted">Low risk, slow steady growth.</p>
+</div>
+
+<div class="card" id="insurance">
+  <h3>🛡️ Insurance Company <span class="tag passive">Passive income</span></h3>
+  <p>Sell protection against market crashes.</p>
+  <ul>
+    <li>Players pay a <b>premium</b> for coverage.</li>
+    <li>If a policyholder's net worth drops <b>20%+</b>, the company automatically <b>pays them out</b>.</li>
+  </ul>
+  <p class="muted">Profits in calm markets, pays out in crashes — price your premiums wisely.</p>
+</div>
+
+<div class="card" id="bounty_hunter">
+  <h3>🎯 Bounty Hunter <span class="tag active">Active</span></h3>
+  <p>Players put hits on each other's portfolios.</p>
+  <ul>
+    <li>A player posts a <b>bounty</b> on a target (30% fee goes to the company).</li>
+    <li>If the target's net worth drops enough, the bounty <b>pays out</b> to the poster.</li>
+  </ul>
+  <p class="muted">A way to profit from (or cause) other players' losses.</p>
+</div>
+
+<div class="card" id="market_maker">
+  <h3>⚖️ Market Maker <span class="tag passive">Passive income</span></h3>
+  <p>Be the middleman — buy low, sell high, pocket the spread.</p>
+  <ul>
+    <li>The CEO sets a <b>buy price</b> and a <b>sell price</b> (the spread).</li>
+    <li>Players trade SUS directly with the company at those prices; the gap is the company's profit.</li>
+  </ul>
+  <p class="muted">Earns on volume. Keep both treasury cash and SUS shares stocked.</p>
+</div>
+
+<div class="card" id="sus_mafia">
+  <h3>🤌 Sus Mafia <span class="tag active">Active</span></h3>
+  <p>Run a protection racket.</p>
+  <ul>
+    <li>Players and companies <b>pay protection</b> into the treasury.</li>
+    <li>Lean on others to keep the payments coming.</li>
+  </ul>
+  <p class="muted">As much a social game as an economic one.</p>
+</div>
+
+<div class="card" id="wolf_pack">
+  <h3>🐺 Wolf Pack <span class="tag risk">Risky</span></h3>
+  <p>Move as one to slam the market up.</p>
+  <ul>
+    <li>A majority <b>buy vote</b> amplifies the price target by ~<b>3×</b> — an even bigger move than a pump &amp; dump.</li>
+    <li>Profits are meant to be shared by the pack.</li>
+  </ul>
+  <p class="muted">The biggest coordinated price swings in the game.</p>
+</div>
+
+<div class="card" id="casino">
+  <h3>🎰 Casino <span class="tag passive">Passive income</span> <span class="tag risk">Risky for players</span></h3>
+  <p>Players gamble against your treasury; the house edge earns you money over time.</p>
+  <ul>
+    <li>Players bet on 5 games with different odds:</li>
+    <li>🪙 <b>Coin Flip</b> — 48% to win 2× (4% house edge)</li>
+    <li>🃏 <b>High Card</b> — 45% to win 2.1× (5.5% edge)</li>
+    <li>🎲 <b>Dice Roll</b> — 33% to win 2.8× (7.6% edge)</li>
+    <li>🎡 <b>Roulette</b> — 25% to win 3.6× (10% edge)</li>
+    <li>🎰 <b>Slots</b> — 10% to win 8× jackpot (20% edge)</li>
+    <li>Wins are paid from the treasury; losses go into it. Over time the house profits.</li>
+  </ul>
+  <p class="muted">Owners earn steadily; players chase the jackpot. Keep the treasury funded to cover big wins.</p>
+</div>
+
+</div>
 </body>
 </html>
 """

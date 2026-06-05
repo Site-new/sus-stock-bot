@@ -2317,16 +2317,11 @@ async function openDrawerCompany(cid) {
         <select id="d-free-input" class="trade-input" style="flex:1;margin-bottom:0"><option value="">Select a user...</option></select>
         <button class="btn btn-discord" onclick="dGrantFree('${cid}')">Grant</button>
       </div>
-      ${(() => {
-        const free = c.type === 'insider_ring'
-          ? (c._subscribers_list||[]).filter(s => s.free)
-          : (c._free_access_list||[]);
-        return free.length ? `<div style="margin-top:6px">${free.map(f => `
+      ${(c.type !== 'insider_ring' && (c._free_access_list||[]).length) ? `<div style="margin-top:6px">${c._free_access_list.map(f => `
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0">
             <span>🎁 ${f.name}</span>
             <button onclick="dRevokeFree('${cid}','${f.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:11px">✕ Revoke</button>
-          </div>`).join('')}</div>` : '';
-      })()}
+          </div>`).join('')}</div>` : ''}
     </div>
     <div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">CEO — Trade SUS (holds ${c.sus_shares||0} shares)</div>
@@ -2352,9 +2347,11 @@ async function openDrawerCompany(cid) {
     ${c.type === 'insider_ring' ? `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🔍 Subscribers (${(c._subscribers_list||[]).length})</div>
       ${(c._subscribers_list && c._subscribers_list.length) ? c._subscribers_list.map(s => `
-        <div style="display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border)">
-          <span>${s.name}</span>
-          <span class="sub-due" data-due="${s.next_due}" style="font-size:11px;color:var(--accent);font-weight:700">next: --</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border)">
+          <span>${s.free ? '🎁 ' : ''}${s.name}</span>
+          ${s.free
+            ? `<span style="display:flex;align-items:center;gap:8px"><span style="font-size:11px;color:var(--green);font-weight:700">∞ Free</span>${isCeo ? `<button onclick="dRevokeFree('${cid}','${s.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:11px">✕ Revoke</button>` : ''}</span>`
+            : `<span class="sub-due" data-due="${s.next_due}" style="font-size:11px;color:var(--accent);font-weight:700">next: --</span>`}
         </div>`).join('') : '<div style="color:var(--muted);font-size:12px">No subscribers yet.</div>'}
     </div>` : ''}
   `;

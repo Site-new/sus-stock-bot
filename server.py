@@ -953,8 +953,10 @@ def api_companies():
             "stock_price": company_stock_price(c, sus_price),
             "shares_issued": c.get("shares_issued", SHARES_ISSUED),
             "description": c.get("description", ""),
+            "marketing": c.get("upgrades", {}).get("marketing", False),
         })
-    result.sort(key=lambda x: x["value"], reverse=True)
+    # Marketing-upgraded companies float to the top, then by value
+    result.sort(key=lambda x: (x.get("marketing", False), x["value"]), reverse=True)
     return jsonify(result)
 
 
@@ -995,6 +997,13 @@ def api_company(cid):
     # Free-access list for non-insider services
     c["_free_access_list"] = [{"id": fid, "name": get_discord_username(fid) or f"User #{fid[-4:]}"}
                               for fid in c.get("free_access", [])]
+
+    # Members with names + salary (for payroll UI)
+    emps = c.get("employees", {})
+    c["_members_list"] = [{"id": mid, "name": get_discord_username(mid) or f"User #{mid[-4:]}",
+                           "salary": emps.get(mid, 0), "is_ceo": mid == c.get("ceo")}
+                          for mid in c.get("members", {})]
+    c["_my_salary"] = emps.get(uid, 0) if uid else 0
 
     return jsonify(c)
 
@@ -1206,6 +1215,67 @@ def api_company_revoke_free(cid):
     else:
         if target in c.get("free_access", []):
             c["free_access"].remove(target)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/set_salary", methods=["POST"])
+def api_company_set_salary(cid):
+    """CEO sets a member's salary (paid from treasury each 20-min cycle)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    target = str(request.json.get("user_id", ""))
+    salary = max(0, float(request.json.get("salary", 0)))
+    if target not in c.get("members", {}):
+        return jsonify({"error": "not a member of this company"}), 400
+    emps = c.setdefault("employees", {})
+    if salary <= 0:
+        emps.pop(target, None)
+    else:
+        emps[target] = round(salary, 2)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+UPGRADES = {
+    "vault":     {"name": "Treasury Vault", "max": 5, "base": 10000, "desc": "+0.5% treasury interest per cycle, per level"},
+    "marketing": {"name": "Marketing Dept", "cost": 15000, "desc": "Highlights your company at the top of the list"},
+}
+
+
+@app.route("/api/companies/<cid>/buy_upgrade", methods=["POST"])
+def api_company_buy_upgrade(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    up = request.json.get("upgrade", "")
+    ups = c.setdefault("upgrades", {"vault": 0, "marketing": False})
+    if up == "vault":
+        lvl = ups.get("vault", 0)
+        if lvl >= UPGRADES["vault"]["max"]:
+            return jsonify({"error": "max level"}), 400
+        cost = UPGRADES["vault"]["base"] * (lvl + 1)
+        if c["treasury"] < cost:
+            return jsonify({"error": f"Treasury needs {fmt(cost)}"}), 400
+        c["treasury"] = round(c["treasury"] - cost, 2)
+        ups["vault"] = lvl + 1
+    elif up == "marketing":
+        if ups.get("marketing"):
+            return jsonify({"error": "already owned"}), 400
+        cost = UPGRADES["marketing"]["cost"]
+        if c["treasury"] < cost:
+            return jsonify({"error": f"Treasury needs {fmt(cost)}"}), 400
+        c["treasury"] = round(c["treasury"] - cost, 2)
+        ups["marketing"] = True
+    else:
+        return jsonify({"error": "unknown upgrade"}), 400
     save_companies(companies)
     return jsonify({"ok": True})
 
@@ -3237,7 +3307,7 @@ async function loadDrawerCompanies() {
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <span style="font-size:22px">${t.emoji}</span>
         <div style="flex:1">
-          <div style="font-weight:700;font-size:14px">${c.name}</div>
+          <div style="font-weight:700;font-size:14px">${c.name} ${c.marketing ? '<span style="font-size:9px;background:#fee75c22;color:#fee75c;padding:1px 5px;border-radius:999px;font-weight:700">📣 PROMOTED</span>' : ''}</div>
           <div style="font-size:11px;color:var(--accent);font-weight:700">${c.ticker} · ${t.name}</div>
         </div>
         <div style="text-align:right">
@@ -3345,6 +3415,31 @@ async function openDrawerCompany(cid) {
           <span style="font-weight:700">${inv.shares} shares</span>
         </div>`).join('') : '<div style="color:var(--muted);font-size:12px">No investors yet.</div>'}
     </div>
+
+    <!-- Payroll -->
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">💼 Payroll ${c._my_salary ? `· You earn ${fmt(c._my_salary)}/cycle` : ''}</div>
+      ${isCeo ? (c._members_list||[]).map(mem => `
+        <div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 0">
+          <span style="flex:1">${mem.name}${mem.is_ceo?' (you)':''}</span>
+          <input type="number" id="sal-${mem.id}" class="trade-input" placeholder="0" value="${mem.salary||''}" style="width:90px;margin-bottom:0;padding:4px 8px;font-size:12px"/>
+          <button class="btn btn-discord" style="padding:4px 8px;font-size:11px" onclick="dSetSalary('${cid}','${mem.id}')">Set</button>
+        </div>`).join('')
+        : `<div style="font-size:12px;color:var(--muted)">${c._my_salary ? 'You are on payroll, paid every 20 min.' : 'Not on payroll.'}</div>`}
+    </div>
+
+    <!-- Upgrades -->
+    ${isCeo ? `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">⚙️ Upgrades</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0">
+        <span>🏦 Treasury Vault Lv.${(c.upgrades||{}).vault||0}/5 <span style="color:var(--muted)">+${0.5*((c.upgrades||{}).vault||0)}%/cycle</span></span>
+        ${((c.upgrades||{}).vault||0) < 5 ? `<button class="btn btn-buy" style="padding:4px 8px;font-size:11px" onclick="dBuyUpgrade('${cid}','vault')">Upgrade (${fmt(10000*(((c.upgrades||{}).vault||0)+1))})</button>` : '<span style="color:var(--green);font-size:11px">MAX</span>'}
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0">
+        <span>📣 Marketing Dept ${(c.upgrades||{}).marketing?'✅':''}</span>
+        ${!(c.upgrades||{}).marketing ? `<button class="btn btn-buy" style="padding:4px 8px;font-size:11px" onclick="dBuyUpgrade('${cid}','marketing')">Buy (${fmt(15000)})</button>` : '<span style="color:var(--green);font-size:11px">OWNED</span>'}
+      </div>
+    </div>` : ''}
 
     ${c.type === 'insider_ring' ? `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🔍 Subscribers (${(c._subscribers_list||[]).length})</div>
@@ -3518,6 +3613,8 @@ async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`
 async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
+async function dSetSalary(cid, uid) { const s=parseFloat(document.getElementById('sal-'+uid)?.value)||0; await dAction(`/api/companies/${cid}/set_salary`,{user_id:uid,salary:s},'Salary set',cid); }
+async function dBuyUpgrade(cid, upgrade) { await dAction(`/api/companies/${cid}/buy_upgrade`,{upgrade},'Upgrade purchased!',cid); }
 async function dDistribute(cid) { const a=parseFloat(document.getElementById('d-dist-amt')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/distribute`,{amount:a},'Profits distributed!',cid); }
 async function dPostNews(cid, positive) { const h=document.getElementById('d-news-input')?.value.trim(); if(!h){showToast('Enter a headline',false);return;} await dAction(`/api/companies/${cid}/post_news`,{headline:h,positive},'Announcement posted!',cid); }
 async function dGrantFree(cid) { const t=document.getElementById('d-free-input')?.value.trim(); if(!t){showToast('Pick a user',false);return;} await dAction(`/api/companies/${cid}/grant_free`,{user_id:t},'Free access granted!',cid); }

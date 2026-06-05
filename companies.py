@@ -89,4 +89,6 @@ def create_company(founder_id, name, ticker, company_type, description="", sub_p
         "pending_news": [],    # insider_ring: queued early news
         "sub_price": round(float(sub_price), 2),  # insider_ring: $/hour subscription
         "subscribers": {},     # insider_ring: {uid: {since: ts}}
+        "employees": {},       # {uid: salary_per_cycle}
+        "upgrades": {"vault": 0, "marketing": False},  # vault level, marketing flag
     }

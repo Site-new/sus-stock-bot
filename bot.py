@@ -709,6 +709,19 @@ async def process_companies():
             ctype = c.get("type")
             members = c.get("members", {})
 
+            # ── Payroll: pay employee salaries from treasury ─────────────────
+            for emp_uid, salary in list(c.get("employees", {}).items()):
+                if salary > 0 and c["treasury"] >= salary and emp_uid in data.get("users", {}):
+                    c["treasury"] = round(c["treasury"] - salary, 2)
+                    data["users"][emp_uid]["balance"] = round(data["users"][emp_uid]["balance"] + salary, 2)
+                    changed = True
+
+            # ── Treasury Vault upgrade: passive interest ─────────────────────
+            vlvl = c.get("upgrades", {}).get("vault", 0)
+            if vlvl > 0 and c["treasury"] > 0:
+                c["treasury"] = round(c["treasury"] * (1 + 0.005 * vlvl), 2)
+                changed = True
+
             # ── Insider Ring: charge subscribers their hourly fee when due ─────
             if ctype == "insider_ring":
                 sub_price = c.get("sub_price", 0)

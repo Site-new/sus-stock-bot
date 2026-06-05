@@ -276,7 +276,8 @@ def api_leaderboard():
         username = get_discord_username(uid)
         rows.append({"id": uid, "username": username, "shares": u["shares"], "cash": u["balance"],
                      "invested": invested, "net_worth": net_worth,
-                     "pnl": round(net_worth - STARTING_BALANCE, 2), "is_company": False})
+                     "pnl": round(net_worth - STARTING_BALANCE, 2), "is_company": False,
+                     "verified": u.get("verified", False)})
     # Include companies, ranked by total value, showing their CEO
     try:
         from companies import load_companies as _lc, company_value as _cv
@@ -2482,7 +2483,7 @@ async function fetchLeaderboard() {
       name = `🏢 ${u.username}`;
       sub = `CEO: ${u.ceo || 'Unknown'} · ${u.shares} SUS`;
     } else {
-      name = u.id === myUserId ? '⭐ ' + (u.username || 'You') : (u.username || 'Trader #'+u.id.slice(-4));
+      name = (u.id === myUserId ? '⭐ ' + (u.username || 'You') : (u.username || 'Trader #'+u.id.slice(-4))) + (u.verified ? ' <span style="color:#57f287">✓</span>' : '');
       sub = `${u.pnl>=0?'+':''}${fmt(u.pnl)} · ${u.shares} shares`;
     }
     return `<div class="lb-row ${u.id === myUserId ? 'lb-me' : ''}">

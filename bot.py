@@ -773,7 +773,7 @@ async def process_companies():
             # ── Treasury Vault upgrade: passive interest ─────────────────────
             vlvl = c.get("upgrades", {}).get("vault", 0)
             if vlvl > 0 and c["treasury"] > 0:
-                c["treasury"] = round(c["treasury"] * (1 + 0.005 * vlvl), 2)
+                c["treasury"] = round(c["treasury"] * (1 + 0.0025 * vlvl), 2)
                 changed = True
 
             # ── Marketing Dept: auto-post an ad to market news ───────────────
@@ -823,7 +823,7 @@ async def process_companies():
             if ctype == "savings":
                 for uid, dep_amount in c.get("deposits", {}).items():
                     if dep_amount > 0 and uid in data.get("users", {}):
-                        interest = round(dep_amount * 0.03, 2)
+                        interest = round(dep_amount * 0.01, 2)
                         c["treasury"] = round(c["treasury"] - interest, 2)
                         data["users"][uid]["balance"] = round(data["users"][uid]["balance"] + interest, 2)
                 changed = True
@@ -969,11 +969,11 @@ async def fluctuate_price():
 
         # Bull/Bear cycle bias
         cycle = data.get("bull_bear", "neutral")
-        bias = 0.025 if cycle == "bull" else (-0.025 if cycle == "bear" else 0)
+        bias = 0.015 if cycle == "bull" else (-0.015 if cycle == "bear" else 0)
 
         # Fear/Greed sentiment (0=fear, 100=greed) affects volatility
         sentiment = data.get("sentiment", 50)
-        volatility = 0.03 + (abs(sentiment - 50) / 50) * 0.05  # 3%-8%
+        volatility = 0.018 + (abs(sentiment - 50) / 50) * 0.03  # ~1.8%-4.8%
 
         # Flash crash: 0.8% chance per tick — queued with 5-min insider warning
         has_pending_crash = any(pe.get("crash") for pe in data.get("pending_earnings", []))
@@ -1086,7 +1086,7 @@ async def earnings_report():
         return
     data = load_data()
     positive = random.random() > 0.45
-    impact_pct = round((random.uniform(0.08, 0.25) if positive else random.uniform(-0.22, -0.08)) * 100, 2)
+    impact_pct = round((random.uniform(0.055, 0.175) if positive else random.uniform(-0.155, -0.055)) * 100, 2)
     headline = get_headline(positive)
     now = int(time.time())
 

@@ -11,6 +11,7 @@ app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 DATA_FILE = os.environ.get("DATA_FILE", "/data/data.json" if os.path.isdir("/data") else "data.json")
 CHAT_FILE = DATA_FILE.replace("data.json", "chat.json")
 STARTING_BALANCE = 1000.0
+TRADE_FEE = 0.03  # 3% fee on SUS buys and sells (slows progression, drains money)
 
 DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET")
@@ -281,7 +282,7 @@ def admin_fire_news():
     import random as _r
     from headlines import get_headline
     positive = _r.random() > 0.45
-    impact = round((_r.uniform(8, 25) if positive else _r.uniform(-22, -8)), 2)
+    impact = round((_r.uniform(5.5, 17.5) if positive else _r.uniform(-15.5, -5.5)), 2)
     headline = get_headline(positive)
     data = load_data()
     now = int(time.time())
@@ -581,22 +582,22 @@ def api_buy():
         return jsonify({"error": "invalid amount"}), 400
     data = load_data()
     price = data["stock_price"]
-    cost = round(price * shares, 2)
+    cost = round(price * shares * (1 + TRADE_FEE), 2)  # 3% trading fee
     companies = load_companies()
     acting, acting_id = get_acting_company(companies)
     if acting:
         if acting["treasury"] < cost:
-            return jsonify({"error": f"Company needs {fmt(cost)}, has {fmt(acting['treasury'])}"}), 400
+            return jsonify({"error": f"Company needs {fmt(cost)} (incl. 3% fee), has {fmt(acting['treasury'])}"}), 400
         acting["treasury"] = round(acting["treasury"] - cost, 2)
         acting["sus_shares"] = acting.get("sus_shares", 0) + shares
         save_companies(companies)
         return jsonify({"ok": True, "bought": shares, "cost": cost, "balance": acting["treasury"], "shares": acting["sus_shares"]})
     u = get_user(data, session["user_id"])
     if u["balance"] < cost:
-        return jsonify({"error": f"Not enough cash. Need {fmt(cost)}, have {fmt(u['balance'])}"}), 400
+        return jsonify({"error": f"Not enough cash. Need {fmt(cost)} (incl. 3% fee), have {fmt(u['balance'])}"}), 400
     u["balance"] = round(u["balance"] - cost, 2)
     u["shares"] += shares
-    log_transaction(data, session["user_id"], "buy", f"Bought {shares} SUS @ {fmt(price)}", -cost)
+    log_transaction(data, session["user_id"], "buy", f"Bought {shares} SUS @ {fmt(price)} (3% fee)", -cost)
     save_data(data)
     return jsonify({"ok": True, "bought": shares, "cost": cost, "balance": u["balance"], "shares": u["shares"]})
 
@@ -610,7 +611,7 @@ def api_sell():
         return jsonify({"error": "invalid amount"}), 400
     data = load_data()
     price = data["stock_price"]
-    earnings = round(price * shares, 2)
+    earnings = round(price * shares * (1 - TRADE_FEE), 2)  # 3% trading fee
     companies = load_companies()
     acting, acting_id = get_acting_company(companies)
     if acting:
@@ -623,10 +624,9 @@ def api_sell():
     u = get_user(data, session["user_id"])
     if u["shares"] < shares:
         return jsonify({"error": f"You only have {u['shares']} shares"}), 400
-    earnings = round(price * shares, 2)
     u["shares"] -= shares
     u["balance"] = round(u["balance"] + earnings, 2)
-    log_transaction(data, session["user_id"], "sell", f"Sold {shares} SUS @ {fmt(price)}", earnings)
+    log_transaction(data, session["user_id"], "sell", f"Sold {shares} SUS @ {fmt(price)} (3% fee)", earnings)
     save_data(data)
     return jsonify({"ok": True, "sold": shares, "earnings": earnings, "balance": u["balance"], "shares": u["shares"]})
 
@@ -1555,9 +1555,9 @@ def api_company_loan(cid):
         return jsonify({"error": "bank insufficient funds"}), 400
     data = load_data()
     u = get_user(data, uid)
-    rate = 0.05  # 5% per 20min cycle
+    rate = 0.04  # interest charged per cycle
     c["treasury"] = round(c["treasury"] - amount, 2)
-    c.setdefault("loans", {})[uid] = {"amount": amount, "rate": rate, "due": round(amount * 1.2, 2)}
+    c.setdefault("loans", {})[uid] = {"amount": amount, "rate": rate, "due": round(amount * 1.08, 2)}
     u["balance"] = round(u["balance"] + amount, 2)
     save_data(data)
     save_companies(companies)
@@ -3540,7 +3540,7 @@ async function loadHistory() {
 }
 
 // ── Companies drawer ───────────────────────────────────────────────────────────
-const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 3% every 20min on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."}};
+const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 1% every 20min on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."}};
 let companiesOpen = false;
 let detailOpen = false;
 let dcSelectedType = null;
@@ -3699,7 +3699,7 @@ async function openDrawerCompany(cid) {
     ${isCeo ? `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">⚙️ Upgrades</div>
       <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0">
-        <span>🏦 Treasury Vault Lv.${(c.upgrades||{}).vault||0}/5 <span style="color:var(--muted)">+${0.5*((c.upgrades||{}).vault||0)}%/cycle</span></span>
+        <span>🏦 Treasury Vault Lv.${(c.upgrades||{}).vault||0}/5 <span style="color:var(--muted)">+${0.25*((c.upgrades||{}).vault||0)}%/cycle</span></span>
         ${((c.upgrades||{}).vault||0) < 5 ? `<button class="btn btn-buy" style="padding:4px 8px;font-size:11px" onclick="dBuyUpgrade('${cid}','vault')">Upgrade (${fmt(10000*(((c.upgrades||{}).vault||0)+1))})</button>` : '<span style="color:var(--green);font-size:11px">MAX</span>'}
       </div>
       ${(() => {
@@ -3780,12 +3780,12 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
     </div>`;
     }
     case 'lending_bank': return `<div style="margin-bottom:12px">
-      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Loans (20% interest)</div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Loans (8% interest)</div>
       ${c._my_loan ? `<div style="color:var(--red);margin-bottom:6px;font-size:13px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-sell" style="width:100%" onclick="dRepayLoan('${cid}')">Repay Loan</button>`
       : `<input type="number" id="d-loan-amt" class="trade-input" placeholder="Loan amount"/><button class="btn btn-discord" style="width:100%" onclick="dRequestLoan('${cid}')">Request Loan</button>`}
     </div>`;
     case 'savings': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
-      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🐷 Savings — 3% per 20min</div>
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🐷 Savings — 1% per 20min</div>
       <div style="font-size:13px;color:var(--green)">Your deposit: ${fmt(c._my_deposit||0)}</div>
       <div style="font-size:11px;color:var(--muted)">Deposit to treasury to earn interest automatically.</div>
     </div>`;
@@ -4320,9 +4320,9 @@ function buildTypePanel(c, isMember, isCeo) {
     case 'lending_bank': return `
       <div><div class="card-title">Loans</div>
       ${c._my_loan ? `<div style="color:var(--red);margin-bottom:8px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-red" style="width:100%" onclick="repayLoan('${cid}')">Repay Loan</button>` :
-      `<input type="number" id="loan-amt" placeholder="Loan amount"/><button class="btn btn-primary" style="width:100%" onclick="requestLoan('${cid}')">Request Loan (20% interest)</button>`}</div>`;
+      `<input type="number" id="loan-amt" placeholder="Loan amount"/><button class="btn btn-primary" style="width:100%" onclick="requestLoan('${cid}')">Request Loan (8% interest)</button>`}</div>`;
     case 'savings': return `
-      <div><div class="card-title">Savings (3% per 20min)</div>
+      <div><div class="card-title">Savings (1% per 20min)</div>
       <div style="margin-bottom:8px;color:var(--green)">Your deposit: ${fmt(c._my_deposit || 0)}</div>
       <div style="font-size:11px;color:var(--muted)">Deposit into treasury to earn interest automatically.</div></div>`;
     case 'insurance': return `
@@ -4659,7 +4659,7 @@ GUIDE_HTML = """
   <h3>🏦 Lending Bank <span class="tag passive">Passive income</span></h3>
   <p>Loan cash to players and collect interest.</p>
   <ul>
-    <li>Players <b>request a loan</b> from the treasury and owe it back with <b>20% interest</b>.</li>
+    <li>Players <b>request a loan</b> from the treasury and owe it back with <b>8% interest</b>.</li>
     <li>Interest is collected automatically each cycle into the treasury.</li>
   </ul>
   <p class="muted">Steady income as long as borrowers keep borrowing.</p>
@@ -4679,7 +4679,7 @@ GUIDE_HTML = """
   <h3>🐷 Savings Account <span class="tag passive">Passive</span></h3>
   <p>A safe place to park cash and earn guaranteed interest.</p>
   <ul>
-    <li>Deposit cash and earn <b>3% every 20 minutes</b>, paid from the treasury.</li>
+    <li>Deposit cash and earn <b>1% every 20 minutes</b>, paid from the treasury.</li>
     <li>No risk to the depositor — interest is guaranteed while the treasury can pay.</li>
   </ul>
   <p class="muted">Low risk, slow steady growth.</p>

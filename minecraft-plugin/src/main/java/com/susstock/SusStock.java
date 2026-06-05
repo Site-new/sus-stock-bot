@@ -7,6 +7,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.OutputStream;
@@ -20,6 +21,8 @@ public class SusStock extends JavaPlugin implements Listener {
 
     private String apiBase;
     private String apiKey;
+    private volatile boolean netherUnlocked = false;
+    private volatile boolean endUnlocked = false;
 
     @Override
     public void onEnable() {
@@ -31,7 +34,30 @@ public class SusStock extends JavaPlugin implements Listener {
         Bukkit.getScheduler().runTaskTimer(this, () -> {
             for (Player p : Bukkit.getOnlinePlayers()) claimRewards(p, false);
         }, 600L, 600L);
+        // Poll server-wide dimension unlocks every 60s (and once now)
+        Bukkit.getScheduler().runTaskTimer(this, this::pollUnlocks, 20L, 1200L);
         getLogger().info("SusStock enabled. API: " + apiBase);
+    }
+
+    private void pollUnlocks() {
+        runAsync(() -> {
+            String resp = get("/api/mc/unlocks?key=" + enc(apiKey));
+            if (resp == null) return;
+            netherUnlocked = resp.contains("\"nether\":true") || resp.contains("\"nether\": true");
+            endUnlocked = resp.contains("\"end\":true") || resp.contains("\"end\": true");
+        });
+    }
+
+    @EventHandler
+    public void onPortal(PlayerPortalEvent e) {
+        String c = e.getCause().name();
+        if (c.contains("NETHER") && !netherUnlocked) {
+            e.setCancelled(true);
+            e.getPlayer().sendMessage("§c🔒 The Nether is locked! Unlock it on the website (Server Unlocks).");
+        } else if (c.contains("END") && !endUnlocked) {
+            e.setCancelled(true);
+            e.getPlayer().sendMessage("§c🔒 The End is locked! Unlock it on the website (Server Unlocks).");
+        }
     }
 
     @EventHandler

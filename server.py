@@ -250,6 +250,7 @@ def admin_reset_market():
     data["pending_bull_bear"] = None
     data["notifications"] = {}
     data["history"] = {}
+    data["unlocks"] = {}
 
     # Delete every store-created Discord role
     gid = get_guild_id()
@@ -1796,6 +1797,80 @@ def api_mc_pending():
     return jsonify({"commands": cmds})
 
 
+DEFAULT_UNLOCKS = {
+    "nether": {"name": "The Nether", "emoji": "🔥", "goal": 100000},
+    "end":    {"name": "The End",    "emoji": "🐉", "goal": 250000},
+}
+
+def get_unlocks(data):
+    u = data.setdefault("unlocks", {})
+    for k in DEFAULT_UNLOCKS:
+        if k not in u:
+            u[k] = {"pooled": 0, "unlocked": False, "contributors": {}}
+    return u
+
+
+@app.route("/api/unlocks")
+def api_unlocks():
+    data = load_data()
+    u = get_unlocks(data)
+    save_data(data)
+    uid = session.get("user_id")
+    out = []
+    for k, info in DEFAULT_UNLOCKS.items():
+        st = u[k]
+        out.append({"key": k, "name": info["name"], "emoji": info["emoji"], "goal": info["goal"],
+                    "pooled": round(st["pooled"], 2), "unlocked": st["unlocked"],
+                    "mine": round(st["contributors"].get(uid, 0), 2) if uid else 0})
+    return jsonify(out)
+
+
+@app.route("/api/unlocks/contribute", methods=["POST"])
+def api_unlocks_contribute():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    key = request.json.get("key", "")
+    amount = float(request.json.get("amount", 0))
+    if key not in DEFAULT_UNLOCKS or amount <= 0:
+        return jsonify({"error": "invalid"}), 400
+    data = load_data()
+    u = get_unlocks(data)
+    st = u[key]
+    if st["unlocked"]:
+        return jsonify({"error": "already unlocked"}), 400
+    user = get_user(data, session["user_id"])
+    if user["balance"] < amount:
+        return jsonify({"error": "not enough cash"}), 400
+    # Don't overshoot the goal
+    remaining = DEFAULT_UNLOCKS[key]["goal"] - st["pooled"]
+    amount = round(min(amount, remaining), 2)
+    user["balance"] = round(user["balance"] - amount, 2)
+    st["pooled"] = round(st["pooled"] + amount, 2)
+    st["contributors"][session["user_id"]] = round(st["contributors"].get(session["user_id"], 0) + amount, 2)
+    log_transaction(data, session["user_id"], "send", f"🔓 Contributed to {DEFAULT_UNLOCKS[key]['name']}", -amount)
+    newly = False
+    if st["pooled"] >= DEFAULT_UNLOCKS[key]["goal"] and not st["unlocked"]:
+        st["unlocked"] = True
+        newly = True
+        info = DEFAULT_UNLOCKS[key]
+        events = data.get("news_feed", [])
+        events.append({"headline": f"🔓 {info['emoji']} {info['name']} has been UNLOCKED server-wide!",
+                       "positive": True, "impact": 0, "ts": int(time.time()),
+                       "public_at": int(time.time()), "kind": "announcement"})
+        data["news_feed"] = events[-50:]
+    save_data(data)
+    return jsonify({"ok": True, "pooled": st["pooled"], "unlocked": st["unlocked"], "newly": newly})
+
+
+@app.route("/api/mc/unlocks")
+def api_mc_unlocks():
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    data = load_data()
+    u = get_unlocks(data)
+    return jsonify({k: u[k]["unlocked"] for k in DEFAULT_UNLOCKS})
+
+
 @app.route("/api/mc/status")
 def mc_status():
     if not _mc_auth():
@@ -2170,6 +2245,7 @@ DASHBOARD_HTML = """
   <button id="linkmc-btn" onclick="openLinkMC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🟩 Link MC</button>
   <a href="/guide" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px;text-decoration:none">📖 Guide</a>
   <button onclick="openStore()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🛒 Store</button>
+  <button onclick="openUnlocks()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🔓 Server Unlocks</button>
   <button onclick="toggleHistory()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">📜 History</button>
   <button onclick="toggleCompanies()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🏢 Companies</button>
   <div class="auth-area" id="auth-area">
@@ -2363,6 +2439,18 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Server Unlocks modal -->
+<div id="unlocks-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:17px;font-weight:700">🔓 Server-Wide Unlocks</span>
+      <button onclick="closeUnlocks()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">Pool money together to unlock dimensions for the whole Minecraft server. Contributions are final.</div>
+    <div id="unlocks-list">Loading...</div>
+  </div>
+</div>
+
 <!-- Link Minecraft modal -->
 <div id="linkmc-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:26px;width:440px;max-width:95vw;text-align:center">
@@ -2420,6 +2508,44 @@ function updateMarketTimer() {
 }
 updateMarketTimer();
 setInterval(updateMarketTimer, 1000);
+
+// ── Server Unlocks ───────────────────────────────────────────────────────────────
+async function openUnlocks() {
+  document.getElementById('unlocks-modal').style.display = 'flex';
+  loadUnlocks();
+}
+function closeUnlocks() { document.getElementById('unlocks-modal').style.display = 'none'; }
+async function loadUnlocks() {
+  const list = await fetch('/api/unlocks').then(r => r.ok ? r.json() : []).catch(() => []);
+  const el = document.getElementById('unlocks-list');
+  el.innerHTML = list.map(u => {
+    const pct = Math.min(100, (u.pooled / u.goal) * 100);
+    return `<div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:20px">${u.emoji}</span>
+        <span style="font-weight:700;flex:1">${u.name}</span>
+        ${u.unlocked ? '<span style="font-size:11px;font-weight:700;color:var(--green)">✅ UNLOCKED</span>' : ''}
+      </div>
+      <div style="height:10px;background:var(--bg);border-radius:5px;overflow:hidden;margin-bottom:4px">
+        <div style="height:100%;width:${pct}%;background:${u.unlocked?'var(--green)':'var(--accent)'}"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${fmt(u.pooled)} / ${fmt(u.goal)} pooled · you gave ${fmt(u.mine)}</div>
+      ${u.unlocked ? '' : `<div style="display:flex;gap:6px">
+        <input type="number" id="unlock-amt-${u.key}" class="trade-input" placeholder="Amount to contribute" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-discord" onclick="contributeUnlock('${u.key}')">Contribute</button>
+      </div>`}
+    </div>`;
+  }).join('');
+}
+async function contributeUnlock(key) {
+  const amt = parseFloat(document.getElementById('unlock-amt-'+key)?.value);
+  if (!amt || amt <= 0) { showToast('Enter an amount', false); return; }
+  const res = await fetch('/api/unlocks/contribute', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({key, amount: amt})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(d.newly ? '🔓 UNLOCKED for the whole server!' : 'Contributed!');
+  loadUnlocks(); fetchMe();
+}
 
 // ── Link Minecraft ───────────────────────────────────────────────────────────────
 async function openLinkMC() {

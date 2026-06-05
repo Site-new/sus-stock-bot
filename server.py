@@ -1702,14 +1702,12 @@ def mc_add():
 
 # In-game store items → console commands the plugin runs (%player% is replaced)
 MC_STORE = {
-    "diamonds":  {"name": "💎 32 Diamonds",          "cost": 3000,  "cmds": ["give %player% diamond 32"]},
-    "gapples":   {"name": "🍎 16 Golden Apples",      "cost": 4000,  "cmds": ["give %player% golden_apple 16"]},
-    "netherite": {"name": "🪓 Netherite Gear Kit",    "cost": 20000, "cmds": ["give %player% netherite_sword 1", "give %player% netherite_pickaxe 1", "give %player% netherite_chestplate 1", "give %player% netherite_leggings 1", "give %player% netherite_boots 1", "give %player% netherite_helmet 1"]},
-    "xp":        {"name": "✨ 30 XP Levels",          "cost": 2500,  "cmds": ["xp add %player% 30 levels"]},
-    "strength":  {"name": "💪 Strength II (30 min)",  "cost": 5000,  "cmds": ["effect give %player% strength 1800 1"]},
-    "elytra":    {"name": "🪽 Elytra",                "cost": 25000, "cmds": ["give %player% elytra 1"]},
-    "shulker":   {"name": "📦 Shulker Box",           "cost": 6000,  "cmds": ["give %player% shulker_box 1"]},
-    "totem":     {"name": "🪬 Totem of Undying",      "cost": 8000,  "cmds": ["give %player% totem_of_undying 1"]},
+    "diamonds":  {"name": "💎 32 Diamonds",       "cost": 6000,  "cmds": ["give %player% diamond 32"]},
+    "gapples":   {"name": "🍎 16 Golden Apples",   "cost": 1000,  "cmds": ["give %player% golden_apple 16"]},
+    "xp":        {"name": "✨ 30 XP Levels",       "cost": 2000,  "cmds": ["xp add %player% 30 levels"]},
+    "shulker":   {"name": "📦 Shulker Box",        "cost": 10000, "cmds": ["give %player% shulker_box 1"]},
+    "totem":     {"name": "🪬 Totem of Undying",   "cost": 4000,  "cmds": ["give %player% totem_of_undying 1"]},
+    "elytra":    {"name": "🪽 Elytra",             "cost": 25000, "cmds": ["give %player% elytra 1"]},
 }
 
 def mc_uuid_for(data, discord_id):

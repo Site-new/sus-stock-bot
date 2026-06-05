@@ -1,0 +1,20 @@
+name: SusStock
+version: 1.0
+main: com.susstock.SusStock
+api-version: 1.16
+author: SusStock
+description: Links Minecraft players to the Sus Stock Market website.
+commands:
+  suslink:
+    description: Link your Minecraft account to Sus Stock
+    usage: /suslink <code>
+  susbalance:
+    description: Check your Sus Stock cash balance
+    usage: /susbalance
+  susreward:
+    description: (admin) give a player SUS cash
+    usage: /susreward <player> <amount>
+    permission: susstock.admin
+permissions:
+  susstock.admin:
+    default: op

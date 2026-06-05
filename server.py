@@ -500,6 +500,8 @@ def api_me():
         "credit": get_credit(u),
         "credit_tier": credit_tier(get_credit(u)),
         "send_limit": send_limit(get_credit(u)),
+        "mc_linked": next((l.get("username") for l in data.get("mc_links", {}).values()
+                           if l.get("discord_id") == uid), None),
     })
 
 
@@ -1611,6 +1613,113 @@ def api_company_gamble(cid):
                     "game": game["name"], "balance": u["balance"]})
 
 
+# ── Minecraft integration ───────────────────────────────────────────────────────
+
+MC_API_KEY = os.environ.get("MC_API_KEY", "")
+
+def _mc_auth():
+    key = request.headers.get("X-API-Key") or request.args.get("key", "")
+    return MC_API_KEY and key == MC_API_KEY
+
+def mc_get_uid(data, uuid):
+    link = data.get("mc_links", {}).get(uuid)
+    return link["discord_id"] if link else None
+
+
+@app.route("/api/mc/generate_code", methods=["POST"])
+def mc_generate_code():
+    """Website user generates a one-time code to enter in Minecraft."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    import random as _r, string as _s
+    code = "".join(_r.choices(_s.ascii_uppercase + _s.digits, k=6))
+    data = load_data()
+    codes = data.setdefault("mc_link_codes", {})
+    for k in list(codes):
+        if codes[k]["discord_id"] == session["user_id"] or time.time() > codes[k]["expires"]:
+            del codes[k]
+    codes[code] = {"discord_id": session["user_id"], "expires": int(time.time()) + 600}
+    save_data(data)
+    return jsonify({"ok": True, "code": code})
+
+
+@app.route("/api/mc/link", methods=["POST"])
+def mc_link():
+    """Called by the Minecraft plugin to link a player's UUID via a code."""
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    body = request.json or {}
+    code = str(body.get("code", "")).strip().upper()
+    uuid = str(body.get("uuid", ""))
+    username = str(body.get("username", ""))
+    if not code or not uuid:
+        return jsonify({"error": "missing code or uuid"}), 400
+    data = load_data()
+    codes = data.get("mc_link_codes", {})
+    entry = codes.get(code)
+    if not entry or time.time() > entry["expires"]:
+        return jsonify({"error": "invalid or expired code"}), 400
+    discord_id = entry["discord_id"]
+    data.setdefault("mc_links", {})[uuid] = {"discord_id": discord_id, "username": username}
+    del codes[code]
+    data["mc_link_codes"] = codes
+    save_data(data)
+    return jsonify({"ok": True, "discord_name": get_discord_username(discord_id) or "your account"})
+
+
+@app.route("/api/mc/balance")
+def mc_balance():
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    data = load_data()
+    uid = mc_get_uid(data, request.args.get("uuid", ""))
+    if not uid:
+        return jsonify({"error": "not linked"}), 404
+    u = get_user(data, uid)
+    save_data(data)
+    return jsonify({"balance": u["balance"], "discord_name": get_discord_username(uid)})
+
+
+@app.route("/api/mc/add", methods=["POST"])
+def mc_add():
+    """Add (or remove, if negative) SUS cash for a linked player."""
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    body = request.json or {}
+    uuid = str(body.get("uuid", ""))
+    amount = float(body.get("amount", 0))
+    reason = str(body.get("reason", "Minecraft"))[:60]
+    data = load_data()
+    uid = mc_get_uid(data, uuid)
+    if not uid:
+        return jsonify({"error": "not linked"}), 404
+    u = get_user(data, uid)
+    u["balance"] = round(max(0, u["balance"] + amount), 2)
+    log_transaction(data, uid, "receive" if amount >= 0 else "send", f"⛏️ {reason}", amount)
+    save_data(data)
+    return jsonify({"ok": True, "balance": u["balance"]})
+
+
+@app.route("/api/mc/status")
+def mc_status():
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    data = load_data()
+    uid = mc_get_uid(data, request.args.get("uuid", ""))
+    if not uid:
+        return jsonify({"error": "not linked"}), 404
+    u = get_user(data, uid)
+    price = data["stock_price"]
+    nw = round(u["balance"] + u.get("shares", 0) * price, 2)
+    return jsonify({
+        "verified": u.get("verified", False),
+        "credit": get_credit(u),
+        "tier": credit_tier(get_credit(u))["name"],
+        "net_worth": nw,
+        "discord_name": get_discord_username(uid),
+    })
+
+
 # ── Store (Discord-automated perks) ─────────────────────────────────────────────
 
 DISCORD_API = "https://discord.com/api/v10"
@@ -1962,6 +2071,7 @@ DASHBOARD_HTML = """
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
+  <button onclick="openLinkMC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🟩 Link MC</button>
   <a href="/guide" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px;text-decoration:none">📖 Guide</a>
   <button onclick="openStore()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🛒 Store</button>
   <button onclick="toggleHistory()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">📜 History</button>
@@ -2193,6 +2303,20 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Link Minecraft modal -->
+<div id="linkmc-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:26px;width:440px;max-width:95vw;text-align:center">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <span style="font-size:17px;font-weight:700">🟩 Link Minecraft</span>
+      <button onclick="closeLinkMC()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div id="linkmc-body">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:14px">Generate a code, then run <code style="background:var(--surface2);padding:2px 6px;border-radius:5px">/suslink CODE</code> in the Minecraft server to link your account.</p>
+      <button class="btn btn-discord" style="width:100%" onclick="genMCCode()">Generate Link Code</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -2236,6 +2360,32 @@ function updateMarketTimer() {
 }
 updateMarketTimer();
 setInterval(updateMarketTimer, 1000);
+
+// ── Link Minecraft ───────────────────────────────────────────────────────────────
+async function openLinkMC() {
+  if (!myUserId) { showToast('Login first', false); return; }
+  const me = await fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null);
+  const body = document.getElementById('linkmc-body');
+  if (me && me.mc_linked) {
+    body.innerHTML = `<div style="font-size:14px;color:var(--green);font-weight:700;margin-bottom:6px">✅ Linked to Minecraft</div>
+      <div style="font-size:13px;color:var(--muted)">Account: <b style="color:var(--text)">${me.mc_linked}</b></div>
+      <div style="font-size:12px;color:var(--muted);margin-top:10px">Your SUS cash, rewards, and status are now shared with Minecraft.</div>`;
+  } else {
+    body.innerHTML = `<p style="font-size:13px;color:var(--muted);margin-bottom:14px">Generate a code, then run <code style="background:var(--surface2);padding:2px 6px;border-radius:5px">/suslink CODE</code> in the Minecraft server to link your account.</p>
+      <button class="btn btn-discord" style="width:100%" onclick="genMCCode()">Generate Link Code</button>`;
+  }
+  document.getElementById('linkmc-modal').style.display = 'flex';
+}
+function closeLinkMC() { document.getElementById('linkmc-modal').style.display = 'none'; }
+async function genMCCode() {
+  const res = await fetch('/api/mc/generate_code', {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  document.getElementById('linkmc-body').innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">In Minecraft, run:</div>
+    <div style="font-size:24px;font-weight:800;letter-spacing:3px;background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:8px">/suslink ${d.code}</div>
+    <div style="font-size:11px;color:var(--muted)">Code expires in 10 minutes.</div>`;
+}
 
 // ── Store ──────────────────────────────────────────────────────────────────────
 async function openStore() {

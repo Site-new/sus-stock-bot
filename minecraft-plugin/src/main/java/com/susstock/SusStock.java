@@ -46,8 +46,8 @@ public class SusStock extends JavaPlugin implements Listener {
         Bukkit.getScheduler().runTaskTimer(this, () -> {
             for (Player p : Bukkit.getOnlinePlayers()) claimRewards(p, false);
         }, 600L, 600L);
-        // Poll server-wide dimension unlocks every 60s (and once now)
-        Bukkit.getScheduler().runTaskTimer(this, this::pollUnlocks, 20L, 1200L);
+        // Poll server-wide dimension unlocks every 20s (and once now)
+        Bukkit.getScheduler().runTaskTimer(this, this::pollUnlocks, 20L, 400L);
         // Strip store-only items obtained outside the store, every 3s
         Bukkit.getScheduler().runTaskTimer(this, this::stripIllegalItems, 60L, 60L);
         // Poll insider list (60s) and market news (20s)

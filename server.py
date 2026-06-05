@@ -1910,18 +1910,32 @@ def api_store_buy_enchant():
     return jsonify({"ok": True})
 
 
-@app.route("/api/mc/pending_ench")
-def api_mc_pending_ench():
-    """Plugin claims pending enchantments to apply to the player's held item."""
+@app.route("/api/mc/my_enchants")
+def api_mc_my_enchants():
+    """Plugin reads a player's owned (un-applied) enchants WITHOUT clearing them."""
     if not _mc_auth():
         return jsonify({"error": "bad api key"}), 403
     uuid = request.args.get("uuid", "")
     data = load_data()
-    ench = data.get("mc_pending_ench", {}).get(uuid, [])
-    if ench:
-        data["mc_pending_ench"][uuid] = []
-        save_data(data)
-    return jsonify({"enchants": ench})
+    return jsonify({"enchants": data.get("mc_pending_ench", {}).get(uuid, [])})
+
+
+@app.route("/api/mc/use_enchant", methods=["POST"])
+def api_mc_use_enchant():
+    """Consume one enchant token when the player applies it via the menu."""
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    body = request.json or {}
+    uuid = str(body.get("uuid", ""))
+    token = str(body.get("token", ""))
+    data = load_data()
+    lst = data.get("mc_pending_ench", {}).get(uuid, [])
+    if token not in lst:
+        return jsonify({"error": "not owned"}), 400
+    lst.remove(token)
+    data["mc_pending_ench"][uuid] = lst
+    save_data(data)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/store/mc_items")
@@ -2711,7 +2725,7 @@ DASHBOARD_HTML = """
 
     <div id="store-enchant-section" style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px;display:none">
       <div style="font-weight:700;margin-bottom:4px">✨ Enchant Held Item</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Buy an enchant, then in Minecraft <b>hold the item</b> and run <code style="background:var(--bg);padding:1px 5px;border-radius:4px">/susenchant</code>.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Buy enchants here, then in Minecraft run <code style="background:var(--bg);padding:1px 5px;border-radius:4px">/susenchant</code> to open a menu — hold an item and click an enchant to apply it.</div>
       <div id="store-enchants" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
     </div>
 

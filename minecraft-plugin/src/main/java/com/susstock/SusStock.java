@@ -11,9 +11,12 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.enchantment.EnchantItemEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
@@ -33,6 +36,8 @@ public class SusStock extends JavaPlugin implements Listener {
     private volatile boolean netherUnlocked = false;
     private volatile boolean endUnlocked = false;
     private NamespacedKey storeKey;
+    private static final String ENCHANT_MENU_TITLE = "§5Your Enchants";
+    private final java.util.Map<java.util.UUID, java.util.List<String>> enchantMenus = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.Set<String> insiderUuids = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Set<Long> shownInsider = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final java.util.Set<Long> shownPublic = java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -210,13 +215,95 @@ public class SusStock extends JavaPlugin implements Listener {
         if (result == null) return;
         ItemStack first = e.getInventory().getItem(0);
         java.util.Map<Enchantment, Integer> before = (first != null) ? first.getEnchantments() : new java.util.HashMap<>();
-        // If the result gains any enchantment or level beyond the first input, block it
         for (java.util.Map.Entry<Enchantment, Integer> en : result.getEnchantments().entrySet()) {
             if (en.getValue() > before.getOrDefault(en.getKey(), 0)) {
                 e.setResult(null);
                 return;
             }
         }
+    }
+
+    // ── Enchant menu ──────────────────────────────────────────────────────────
+    private static final String[] ROMAN = {"", "I", "II", "III", "IV", "V"};
+
+    private String prettyEnchant(String token) {
+        String[] parts = token.split(":");
+        String name = parts[0].replace("_", " ");
+        StringBuilder sb = new StringBuilder();
+        for (String w : name.split(" "))
+            if (!w.isEmpty()) sb.append(Character.toUpperCase(w.charAt(0))).append(w.substring(1)).append(" ");
+        String lvl = "";
+        try { int l = Integer.parseInt(parts[1]); lvl = (l < ROMAN.length) ? ROMAN[l] : String.valueOf(l); } catch (Exception ignored) {}
+        return sb.toString().trim() + (lvl.isEmpty() ? "" : " " + lvl);
+    }
+
+    private void openEnchantMenu(Player p, java.util.List<String> tokens) {
+        if (tokens.isEmpty()) { p.sendMessage("§7You haven't bought any enchants. Get them on the website store."); return; }
+        int size = ((tokens.size() - 1) / 9 + 1) * 9;
+        if (size < 9) size = 9;
+        Inventory inv = Bukkit.createInventory(null, size, ENCHANT_MENU_TITLE);
+        for (int i = 0; i < tokens.size(); i++) {
+            ItemStack book = new ItemStack(Material.ENCHANTED_BOOK);
+            ItemMeta meta = book.getItemMeta();
+            if (meta != null) {
+                meta.setDisplayName("§b" + prettyEnchant(tokens.get(i)));
+                meta.setLore(java.util.Arrays.asList("§7Click to apply to the item in your hand"));
+                book.setItemMeta(meta);
+            }
+            inv.setItem(i, book);
+        }
+        java.util.List<String> copy = new java.util.ArrayList<>(tokens);
+        p.openInventory(inv);
+        // Put AFTER openInventory so the previous menu's close event doesn't wipe it
+        enchantMenus.put(p.getUniqueId(), copy);
+    }
+
+    @EventHandler
+    public void onMenuClick(InventoryClickEvent e) {
+        if (!ENCHANT_MENU_TITLE.equals(e.getView().getTitle())) return;
+        e.setCancelled(true);
+        if (!(e.getWhoClicked() instanceof Player)) return;
+        Player p = (Player) e.getWhoClicked();
+        java.util.List<String> tokens = enchantMenus.get(p.getUniqueId());
+        if (tokens == null) return;
+        int slot = e.getRawSlot();
+        if (slot < 0 || slot >= tokens.size()) return;
+        String token = tokens.get(slot);
+        ItemStack held = p.getInventory().getItemInMainHand();
+        if (held == null || held.getType() == Material.AIR) {
+            p.sendMessage("§cHold the item you want enchanted, then click again.");
+            return;
+        }
+        String[] parts = token.split(":");
+        Enchantment ench = parts.length >= 1 ? Enchantment.getByKey(NamespacedKey.minecraft(parts[0])) : null;
+        if (ench == null) { p.sendMessage("§cUnknown enchant."); return; }
+        int level;
+        try { level = Integer.parseInt(parts[1]); } catch (Exception ex) { level = 1; }
+        final int flevel = level;
+        // Consume server-side, then apply
+        runAsync(() -> {
+            String resp = post("/api/mc/use_enchant", "{\"uuid\":\"" + p.getUniqueId() + "\",\"token\":\"" + esc(token) + "\"}");
+            if (resp == null || !resp.contains("\"ok\"")) { p.sendMessage("§cCouldn't apply that enchant."); return; }
+            Bukkit.getScheduler().runTask(this, () -> {
+                ItemStack cur = p.getInventory().getItemInMainHand();
+                if (cur == null || cur.getType() == Material.AIR) { p.sendMessage("§cYou're no longer holding an item."); return; }
+                cur.addUnsafeEnchantment(ench, flevel);
+                p.sendMessage("§a✨ Applied " + prettyEnchant(token) + " to your " + cur.getType().name().toLowerCase().replace("_", " ") + "!");
+                tokens.remove(token);
+                if (tokens.isEmpty()) {
+                    p.closeInventory();
+                    p.sendMessage("§7All purchased enchants applied.");
+                } else {
+                    openEnchantMenu(p, tokens);
+                }
+            });
+        });
+    }
+
+    @EventHandler
+    public void onMenuClose(InventoryCloseEvent e) {
+        if (ENCHANT_MENU_TITLE.equals(e.getView().getTitle()))
+            enchantMenus.remove(e.getPlayer().getUniqueId());
     }
 
     private void pollUnlocks() {
@@ -328,30 +415,11 @@ public class SusStock extends JavaPlugin implements Listener {
         if (cmd.getName().equalsIgnoreCase("susenchant")) {
             if (!(sender instanceof Player)) { sender.sendMessage("Players only."); return true; }
             Player p = (Player) sender;
-            ItemStack held = p.getInventory().getItemInMainHand();
-            if (held == null || held.getType() == Material.AIR) {
-                p.sendMessage("§cHold the item you want enchanted, then run /susenchant.");
-                return true;
-            }
             runAsync(() -> {
-                String resp = get("/api/mc/pending_ench?uuid=" + p.getUniqueId() + "&key=" + enc(apiKey));
-                if (resp == null || !resp.contains("\"enchants\"")) { p.sendMessage("§7No enchants to apply."); return; }
+                String resp = get("/api/mc/my_enchants?uuid=" + p.getUniqueId() + "&key=" + enc(apiKey));
+                if (resp == null || !resp.contains("\"enchants\"")) { p.sendMessage("§7Couldn't load your enchants."); return; }
                 java.util.List<String> list = parseCommands(resp);
-                if (list.isEmpty()) { p.sendMessage("§7No enchants purchased. Buy one on the website first."); return; }
-                Bukkit.getScheduler().runTask(this, () -> {
-                    int applied = 0;
-                    for (String tok : list) {
-                        String[] parts = tok.split(":");
-                        if (parts.length < 2) continue;
-                        Enchantment ench = Enchantment.getByKey(NamespacedKey.minecraft(parts[0]));
-                        if (ench == null) continue;
-                        try {
-                            held.addUnsafeEnchantment(ench, Integer.parseInt(parts[1]));
-                            applied++;
-                        } catch (Exception ignored) {}
-                    }
-                    p.sendMessage("§a✨ Applied " + applied + " enchant(s) to your held item!");
-                });
+                Bukkit.getScheduler().runTask(this, () -> openEnchantMenu(p, list));
             });
             return true;
         }

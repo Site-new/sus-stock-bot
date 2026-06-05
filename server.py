@@ -378,11 +378,28 @@ def api_cover():
     price = data["stock_price"]
     pnl = round((short["entry_price"] - price) * short["shares"], 2)
     u = get_user(data, uid)
-    u["balance"] = round(max(0, u["balance"] + pnl), 2)
+
+    # Short Selling Cartel: members get a 2× bonus on profitable covers,
+    # the bonus paid out of the cartel's treasury.
+    bonus = 0
+    if pnl > 0:
+        companies = load_companies()
+        for c in companies.values():
+            if c.get("type") == "short_cartel" and uid in c.get("members", {}):
+                payable = min(pnl, c.get("treasury", 0))  # bonus capped by treasury
+                if payable > 0:
+                    bonus = round(payable, 2)
+                    c["treasury"] = round(c["treasury"] - bonus, 2)
+                    save_companies(companies)
+                break
+
+    total = round(pnl + bonus, 2)
+    u["balance"] = round(max(0, u["balance"] + total), 2)
     data["shorts"] = shorts
-    log_transaction(data, uid, "cover", f"Covered short @ {fmt(price)}", pnl)
+    detail = f"Covered short @ {fmt(price)}" + (f" (+{fmt(bonus)} cartel bonus)" if bonus else "")
+    log_transaction(data, uid, "cover", detail, total)
     save_data(data)
-    return jsonify({"ok": True, "pnl": pnl, "balance": u["balance"]})
+    return jsonify({"ok": True, "pnl": total, "bonus": bonus, "balance": u["balance"]})
 
 
 @app.route("/api/limitbuy", methods=["POST"])
@@ -775,6 +792,41 @@ def api_company_set_sub_price(cid):
     c["sub_price"] = round(float(request.json.get("sub_price", 0)), 2)
     save_companies(companies)
     return jsonify({"ok": True, "sub_price": c["sub_price"]})
+
+
+@app.route("/api/companies/<cid>/distribute", methods=["POST"])
+def api_company_distribute(cid):
+    """Hedge Fund CEO splits an amount of treasury among members by deposit share."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    amount = float(request.json.get("amount", 0))
+    if amount <= 0 or amount > c["treasury"]:
+        return jsonify({"error": "invalid amount"}), 400
+    members = c.get("members", {})
+    total_deposit = sum(m.get("deposit", 0) for m in members.values())
+    data = load_data()
+    if total_deposit <= 0:
+        # Split equally if nobody has deposits
+        share = round(amount / max(1, len(members)), 2)
+        for uid in members:
+            u = get_user(data, uid)
+            u["balance"] = round(u["balance"] + share, 2)
+            log_transaction(data, uid, "receive", f"{c['ticker']} profit share", share)
+    else:
+        for uid, m in members.items():
+            portion = round(amount * (m.get("deposit", 0) / total_deposit), 2)
+            if portion > 0:
+                u = get_user(data, uid)
+                u["balance"] = round(u["balance"] + portion, 2)
+                log_transaction(data, uid, "receive", f"{c['ticker']} profit share", portion)
+    c["treasury"] = round(c["treasury"] - amount, 2)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True, "treasury": c["treasury"]})
 
 
 @app.route("/api/companies/<cid>/set_description", methods=["POST"])
@@ -2074,6 +2126,25 @@ async function openDrawerCompany(cid) {
 function buildDrawerTypePanel(c, isMember, isCeo) {
   const cid = c.id;
   switch(c.type) {
+    case 'hedge_fund': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">💼 Hedge Fund</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Members deposit cash; the CEO trades SUS with the pooled treasury and distributes profits by deposit share.</div>
+      <div style="font-size:12px;margin-bottom:8px">Your deposit: <b>${fmt(c._my_deposit||0)}</b></div>
+      ${isCeo ? `<div style="display:flex;gap:6px"><input type="number" id="d-dist-amt" class="trade-input" placeholder="Amount to distribute" style="flex:1;margin-bottom:0"/><button class="btn btn-buy" onclick="dDistribute('${cid}')">Distribute Profits</button></div>` : ''}
+    </div>`;
+    case 'short_cartel': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🐻 Short Selling Cartel</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Members earn a <b>2× bonus</b> on profitable SUS short covers — the extra payout comes from the cartel treasury, so keep it funded via deposits.</div>
+      <div style="font-size:12px;color:${isMember?'var(--green)':'var(--muted)'}">${isMember ? '✓ Your shorts are amplified.' : 'Join to amplify your shorts.'}</div>
+    </div>`;
+    case 'index_fund': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">📊 Index Fund</div>
+      <div style="font-size:11px;color:var(--muted)">Automatically buys SUS every 20 min with any idle treasury cash. Deposit and hold — the fund's value tracks the market passively. Currently holds <b>${c.sus_shares||0}</b> SUS.</div>
+    </div>`;
+    case 'invest_bank': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">💳 Investment Bank</div>
+      <div style="font-size:11px;color:var(--muted)">Earns a 3% commission on <b>every company stock trade</b> across the whole market, paid into this treasury automatically. Treasury: <b>${fmt(c.treasury)}</b>.</div>
+    </div>`;
     case 'lending_bank': return `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Loans (20% interest)</div>
       ${c._my_loan ? `<div style="color:var(--red);margin-bottom:6px;font-size:13px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-sell" style="width:100%" onclick="dRepayLoan('${cid}')">Repay Loan</button>`
@@ -2168,6 +2239,7 @@ async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`
 async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
+async function dDistribute(cid) { const a=parseFloat(document.getElementById('d-dist-amt')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/distribute`,{amount:a},'Profits distributed!',cid); }
 
 // Create company
 function showCreateDrawer() {

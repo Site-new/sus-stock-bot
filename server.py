@@ -790,9 +790,14 @@ def api_company(cid):
     # Subscribers (insider ring) with next due times
     subs = []
     for s_uid, s in c.get("subscribers", {}).items():
-        subs.append({"name": get_discord_username(s_uid) or f"User #{s_uid[-4:]}", "next_due": s.get("next_due", 0)})
+        subs.append({"id": s_uid, "name": get_discord_username(s_uid) or f"User #{s_uid[-4:]}",
+                     "next_due": s.get("next_due", 0), "free": bool(s.get("free"))})
     subs.sort(key=lambda x: x["next_due"])
     c["_subscribers_list"] = subs
+
+    # Free-access list for non-insider services
+    c["_free_access_list"] = [{"id": fid, "name": get_discord_username(fid) or f"User #{fid[-4:]}"}
+                              for fid in c.get("free_access", [])]
 
     return jsonify(c)
 
@@ -983,6 +988,27 @@ def api_company_grant_free(cid):
         c.setdefault("free_access", [])
         if target not in c["free_access"]:
             c["free_access"].append(target)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/revoke_free", methods=["POST"])
+def api_company_revoke_free(cid):
+    """CEO revokes a user's free access."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    target = str(request.json.get("user_id", "")).strip()
+    if c["type"] == "insider_ring":
+        sub = c.get("subscribers", {}).get(target)
+        if sub and sub.get("free"):
+            del c["subscribers"][target]
+    else:
+        if target in c.get("free_access", []):
+            c["free_access"].remove(target)
     save_companies(companies)
     return jsonify({"ok": True})
 
@@ -2291,6 +2317,16 @@ async function openDrawerCompany(cid) {
         <select id="d-free-input" class="trade-input" style="flex:1;margin-bottom:0"><option value="">Select a user...</option></select>
         <button class="btn btn-discord" onclick="dGrantFree('${cid}')">Grant</button>
       </div>
+      ${(() => {
+        const free = c.type === 'insider_ring'
+          ? (c._subscribers_list||[]).filter(s => s.free)
+          : (c._free_access_list||[]);
+        return free.length ? `<div style="margin-top:6px">${free.map(f => `
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0">
+            <span>🎁 ${f.name}</span>
+            <button onclick="dRevokeFree('${cid}','${f.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:11px">✕ Revoke</button>
+          </div>`).join('')}</div>` : '';
+      })()}
     </div>
     <div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">CEO — Trade SUS (holds ${c.sus_shares||0} shares)</div>
@@ -2457,7 +2493,8 @@ async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
 async function dDistribute(cid) { const a=parseFloat(document.getElementById('d-dist-amt')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/distribute`,{amount:a},'Profits distributed!',cid); }
 async function dPostNews(cid, positive) { const h=document.getElementById('d-news-input')?.value.trim(); if(!h){showToast('Enter a headline',false);return;} await dAction(`/api/companies/${cid}/post_news`,{headline:h,positive},'Announcement posted!',cid); }
-async function dGrantFree(cid) { const t=document.getElementById('d-free-input')?.value.trim(); if(!t){showToast('Enter a user ID',false);return;} await dAction(`/api/companies/${cid}/grant_free`,{user_id:t},'Free access granted!',cid); }
+async function dGrantFree(cid) { const t=document.getElementById('d-free-input')?.value.trim(); if(!t){showToast('Pick a user',false);return;} await dAction(`/api/companies/${cid}/grant_free`,{user_id:t},'Free access granted!',cid); }
+async function dRevokeFree(cid, uid) { await dAction(`/api/companies/${cid}/revoke_free`,{user_id:uid},'Free access revoked',cid); }
 
 // Create company
 function showCreateDrawer() {

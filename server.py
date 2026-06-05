@@ -658,6 +658,22 @@ def api_company(cid):
     c["_my_deposit"] = c.get("deposits", {}).get(uid, 0)
     c["_my_loan"] = c.get("loans", {}).get(uid)
     c["_my_policy"] = c.get("policies", {}).get(uid)
+
+    # Investors (shareholders) with names
+    investors = []
+    for sh_uid, sh in c.get("shareholders", {}).items():
+        if sh > 0:
+            investors.append({"name": get_discord_username(sh_uid) or f"User #{sh_uid[-4:]}", "shares": sh})
+    investors.sort(key=lambda x: x["shares"], reverse=True)
+    c["_investors"] = investors
+
+    # Subscribers (insider ring) with next due times
+    subs = []
+    for s_uid, s in c.get("subscribers", {}).items():
+        subs.append({"name": get_discord_username(s_uid) or f"User #{s_uid[-4:]}", "next_due": s.get("next_due", 0)})
+    subs.sort(key=lambda x: x["next_due"])
+    c["_subscribers_list"] = subs
+
     return jsonify(c)
 
 
@@ -726,7 +742,8 @@ def api_company_subscribe(cid):
         return jsonify({"error": f"Need {fmt(sub_price)} for the first hour"}), 400
     u["balance"] = round(u["balance"] - sub_price, 2)
     c["treasury"] = round(c["treasury"] + sub_price, 2)
-    c.setdefault("subscribers", {})[uid] = {"since": int(time.time())}
+    now = int(time.time())
+    c.setdefault("subscribers", {})[uid] = {"since": now, "next_due": now + 3600}
     log_transaction(data, uid, "send", f"Subscribed to {c['ticker']} insider ring", -sub_price)
     save_data(data)
     save_companies(companies)
@@ -1478,6 +1495,15 @@ function updateEventCountdowns() {
     const ss = String(remain % 60).padStart(2, '0');
     el.textContent = `⏳ ${mm}:${ss}`;
   });
+  // Subscriber next-payment countdowns
+  document.querySelectorAll('.sub-due').forEach(el => {
+    const due = parseInt(el.dataset.due);
+    let remain = Math.round(due - now);
+    if (remain <= 0) { el.textContent = 'next: due now'; return; }
+    const mm = String(Math.floor(remain / 60)).padStart(2, '0');
+    const ss = String(remain % 60).padStart(2, '0');
+    el.textContent = `next: ${mm}:${ss}`;
+  });
 }
 setInterval(updateEventCountdowns, 1000);
 let myUserId = null;
@@ -2013,6 +2039,25 @@ async function openDrawerCompany(cid) {
     </div>` : ''}
 
     ${buildDrawerTypePanel(c, isMember, isCeo)}
+
+    <!-- Investors -->
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">💰 Investors (${(c._investors||[]).length})</div>
+      ${(c._investors && c._investors.length) ? c._investors.map(inv => `
+        <div style="display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border)">
+          <span>${inv.name}</span>
+          <span style="font-weight:700">${inv.shares} shares</span>
+        </div>`).join('') : '<div style="color:var(--muted);font-size:12px">No investors yet.</div>'}
+    </div>
+
+    ${c.type === 'insider_ring' ? `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🔍 Subscribers (${(c._subscribers_list||[]).length})</div>
+      ${(c._subscribers_list && c._subscribers_list.length) ? c._subscribers_list.map(s => `
+        <div style="display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border)">
+          <span>${s.name}</span>
+          <span class="sub-due" data-due="${s.next_due}" style="font-size:11px;color:var(--accent);font-weight:700">next: --</span>
+        </div>`).join('') : '<div style="color:var(--muted);font-size:12px">No subscribers yet.</div>'}
+    </div>` : ''}
   `;
 
   detailOpen = true;

@@ -710,20 +710,24 @@ async def process_companies():
             ctype = c.get("type")
             members = c.get("members", {})
 
-            # ── Insider Ring: bill subscribers (1/3 of hourly rate per 20min) ─
+            # ── Insider Ring: charge subscribers their hourly fee when due ─────
             if ctype == "insider_ring":
                 sub_price = c.get("sub_price", 0)
-                if sub_price > 0:
-                    charge = round(sub_price / 3, 2)
-                    for uid in list(c.get("subscribers", {}).keys()):
-                        u = data.get("users", {}).get(uid)
-                        if u and u["balance"] >= charge:
-                            u["balance"] = round(u["balance"] - charge, 2)
-                            c["treasury"] = round(c["treasury"] + charge, 2)
-                        else:
-                            # Can't pay — drop the subscription
-                            c["subscribers"].pop(uid, None)
-                            print(f"[insider_ring] dropped {uid} (can't pay)")
+                now_t = int(time.time())
+                for uid, sub in list(c.get("subscribers", {}).items()):
+                    if now_t < sub.get("next_due", 0):
+                        continue
+                    u = data.get("users", {}).get(uid)
+                    if sub_price <= 0:
+                        sub["next_due"] = now_t + 3600
+                        continue
+                    if u and u["balance"] >= sub_price:
+                        u["balance"] = round(u["balance"] - sub_price, 2)
+                        c["treasury"] = round(c["treasury"] + sub_price, 2)
+                        sub["next_due"] = now_t + 3600
+                    else:
+                        c["subscribers"].pop(uid, None)
+                        print(f"[insider_ring] dropped {uid} (can't pay)")
                     changed = True
 
             # ── Index Fund: auto-buy SUS with idle cash ──────────────────────

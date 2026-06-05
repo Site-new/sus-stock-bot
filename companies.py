@@ -58,7 +58,7 @@ def is_ceo(company, user_id):
     return str(user_id) == company.get("ceo")
 
 
-def create_company(founder_id, name, ticker, company_type, description=""):
+def create_company(founder_id, name, ticker, company_type, description="", sub_price=0.0):
     cid = str(uuid.uuid4())[:8]
     return {
         "id": cid,
@@ -86,4 +86,6 @@ def create_company(founder_id, name, ticker, company_type, description=""):
         "protection_targets": [],  # sus_mafia: [company_id]
         "vote": None,          # day_trading/pump_dump/wolf_pack: current vote
         "pending_news": [],    # insider_ring: queued early news
+        "sub_price": round(float(sub_price), 2),  # insider_ring: $/hour subscription
+        "subscribers": {},     # insider_ring: {uid: {since: ts}}
     }

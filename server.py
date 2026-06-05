@@ -593,13 +593,18 @@ from companies import (load_companies, save_companies, company_value,
 
 
 def user_in_insider_ring(user_id):
-    """True if the user is a member of any Insider Trading Ring company."""
+    """True if the user runs (CEO) or is a paying subscriber of any Insider Ring."""
     if not user_id:
         return False
+    uid = str(user_id)
     try:
         companies = load_companies()
         for c in companies.values():
-            if c.get("type") == "insider_ring" and str(user_id) in c.get("members", {}):
+            if c.get("type") != "insider_ring":
+                continue
+            if c.get("ceo") == uid:
+                return True
+            if uid in c.get("subscribers", {}):
                 return True
     except Exception:
         pass
@@ -665,6 +670,7 @@ def api_company_create():
     ticker = body.get("ticker", "").strip().upper()[:4]
     ctype = body.get("type", "")
     desc = body.get("description", "").strip()[:200]
+    sub_price = float(body.get("sub_price", 0) or 0)
     if not name or not ticker or ctype not in COMPANY_TYPES:
         return jsonify({"error": "invalid fields"}), 400
     if not ticker.isalpha():
@@ -678,7 +684,7 @@ def api_company_create():
         return jsonify({"error": "ticker already taken"}), 400
     u["balance"] = round(u["balance"] - COMPANY_COST, 2)
     save_data(data)
-    company = create_company(session["user_id"], name, ticker, ctype, desc)
+    company = create_company(session["user_id"], name, ticker, ctype, desc, sub_price=sub_price)
     companies[company["id"]] = company
     save_companies(companies)
     return jsonify({"ok": True, "company": company})
@@ -698,6 +704,60 @@ def api_company_join(cid):
     c.setdefault("members", {})[uid] = {"role": "member", "deposit": 0, "joined_at": int(time.time())}
     save_companies(companies)
     return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/subscribe", methods=["POST"])
+def api_company_subscribe(cid):
+    """Subscribe to an Insider Ring's news feed (pays hourly)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or c["type"] != "insider_ring":
+        return jsonify({"error": "not an insider ring"}), 400
+    uid = session["user_id"]
+    if uid in c.get("subscribers", {}):
+        return jsonify({"error": "already subscribed"}), 400
+    sub_price = c.get("sub_price", 0)
+    # Charge the first hour up front
+    data = load_data()
+    u = get_user(data, uid)
+    if u["balance"] < sub_price:
+        return jsonify({"error": f"Need {fmt(sub_price)} for the first hour"}), 400
+    u["balance"] = round(u["balance"] - sub_price, 2)
+    c["treasury"] = round(c["treasury"] + sub_price, 2)
+    c.setdefault("subscribers", {})[uid] = {"since": int(time.time())}
+    log_transaction(data, uid, "send", f"Subscribed to {c['ticker']} insider ring", -sub_price)
+    save_data(data)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/unsubscribe", methods=["POST"])
+def api_company_unsubscribe(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    uid = session["user_id"]
+    if not c or uid not in c.get("subscribers", {}):
+        return jsonify({"error": "not subscribed"}), 400
+    del c["subscribers"][uid]
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/set_sub_price", methods=["POST"])
+def api_company_set_sub_price(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]) or c["type"] != "insider_ring":
+        return jsonify({"error": "CEO of insider ring only"}), 403
+    c["sub_price"] = round(float(request.json.get("sub_price", 0)), 2)
+    save_companies(companies)
+    return jsonify({"ok": True, "sub_price": c["sub_price"]})
 
 
 @app.route("/api/companies/<cid>/deposit", methods=["POST"])
@@ -1334,6 +1394,10 @@ DASHBOARD_HTML = """
     <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Choose Type</div>
     <div id="dc-type-grid" style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:12px"></div>
     <input type="hidden" id="dc-type"/>
+    <div id="dc-subprice-wrap" style="display:none;margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">🔍 Subscription Price ($/hour)</div>
+      <input type="number" id="dc-subprice" class="trade-input" placeholder="e.g. 40 — what members pay per hour for insider news" min="0"/>
+    </div>
     <div style="display:flex;gap:8px">
       <button class="btn btn-discord" style="flex:1" onclick="submitCreateDrawer()">Found — $2,000</button>
       <button class="btn btn-logout" onclick="hideCreateDrawer()">Cancel</button>
@@ -1925,10 +1989,26 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       <input type="number" id="d-prot-amt" class="trade-input" placeholder="Amount" value="100"/>
       <button class="btn btn-sell" style="width:100%" onclick="dPayProtection('${cid}')">Pay Protection</button>
     </div>`;
-    case 'insider_ring': return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">
-      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🔍 Insider Ring</div>
-      <div style="font-size:12px;color:${isMember?'var(--green)':'var(--muted)'}">${isMember?'You receive market news early.':'Join to access early news.'}</div>
-    </div>`;
+    case 'insider_ring': {
+      const subbed = c.subscribers && c.subscribers[myUserId];
+      const price = c.sub_price || 0;
+      const subCount = c.subscribers ? Object.keys(c.subscribers).length : 0;
+      let inner = `<div style="font-size:12px;font-weight:700;margin-bottom:6px">🔍 Insider Ring · ${subCount} subscriber(s)</div>`;
+      if (isCeo) {
+        inner += `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">You're the owner — you get all news free.</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="number" id="d-subprice" class="trade-input" placeholder="$/hour" value="${price}" style="flex:1;margin-bottom:0"/>
+            <button class="btn btn-discord" onclick="dSetSubPrice('${cid}')">Set Price</button>
+          </div>`;
+      } else if (subbed) {
+        inner += `<div style="font-size:13px;color:var(--green);margin-bottom:6px">✓ Subscribed — you get news ${'5 min'} early (${fmt(price)}/hr)</div>
+          <button class="btn btn-sell" style="width:100%" onclick="dUnsubscribe('${cid}')">Cancel Subscription</button>`;
+      } else {
+        inner += `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Subscribe for ${fmt(price)}/hour to get all market news 5 minutes before everyone else.</div>
+          <button class="btn btn-discord" style="width:100%" onclick="dSubscribe('${cid}')">Subscribe — ${fmt(price)}/hr</button>`;
+      }
+      return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">${inner}</div>`;
+    }
     default: return '';
   }
 }
@@ -1954,6 +2034,9 @@ async function dPostBounty(cid) { const t=document.getElementById('d-bounty-targ
 async function dSetSpread(cid) { const b=parseFloat(document.getElementById('d-spread-buy')?.value),s=parseFloat(document.getElementById('d-spread-sell')?.value); await dAction(`/api/companies/${cid}/set_spread`,{buy:b,sell:s},'Spread set!',cid); }
 async function dMmTrade(cid,action) { const s=parseInt(document.getElementById('d-mm-shares')?.value); if(!s){showToast('Enter shares',false);return;} await dAction(`/api/companies/${cid}/market_trade`,{action,shares:s},'Trade executed',cid); }
 async function dPayProtection(cid) { const a=parseFloat(document.getElementById('d-prot-amt')?.value||100); await dAction(`/api/companies/${cid}/pay_protection`,{amount:a},'Protection paid.',cid); }
+async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`,{},'Subscribed to insider ring!',cid); }
+async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
+async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
 
 // Create company
 function showCreateDrawer() {
@@ -1972,14 +2055,16 @@ function selectDcType(type, el) {
   document.querySelectorAll('#dc-type-grid > div').forEach(e => e.style.borderColor='var(--border)');
   el.style.borderColor = 'var(--accent)';
   document.getElementById('dc-type').value = type; dcSelectedType = type;
+  document.getElementById('dc-subprice-wrap').style.display = (type === 'insider_ring') ? 'block' : 'none';
 }
 async function submitCreateDrawer() {
   const name=document.getElementById('dc-name').value.trim();
   const ticker=document.getElementById('dc-ticker').value.trim().toUpperCase();
   const desc=document.getElementById('dc-desc').value.trim();
   const type=document.getElementById('dc-type').value;
+  const sub_price=parseFloat(document.getElementById('dc-subprice')?.value) || 0;
   if(!name||!ticker||!type){showToast('Fill all fields and pick a type',false);return;}
-  const res=await fetch('/api/companies/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,ticker,description:desc,type})});
+  const res=await fetch('/api/companies/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,ticker,description:desc,type,sub_price})});
   const d=await res.json();
   if(!res.ok){showToast(d.error,false);return;}
   showToast(`${name} founded!`); hideCreateDrawer(); loadDrawerCompanies();

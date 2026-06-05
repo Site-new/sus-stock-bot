@@ -710,6 +710,22 @@ async def process_companies():
             ctype = c.get("type")
             members = c.get("members", {})
 
+            # ── Insider Ring: bill subscribers (1/3 of hourly rate per 20min) ─
+            if ctype == "insider_ring":
+                sub_price = c.get("sub_price", 0)
+                if sub_price > 0:
+                    charge = round(sub_price / 3, 2)
+                    for uid in list(c.get("subscribers", {}).keys()):
+                        u = data.get("users", {}).get(uid)
+                        if u and u["balance"] >= charge:
+                            u["balance"] = round(u["balance"] - charge, 2)
+                            c["treasury"] = round(c["treasury"] + charge, 2)
+                        else:
+                            # Can't pay — drop the subscription
+                            c["subscribers"].pop(uid, None)
+                            print(f"[insider_ring] dropped {uid} (can't pay)")
+                    changed = True
+
             # ── Index Fund: auto-buy SUS with idle cash ──────────────────────
             if ctype == "index_fund" and c["treasury"] >= sus_price:
                 shares_to_buy = int(c["treasury"] // sus_price)

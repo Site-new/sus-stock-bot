@@ -27,6 +27,10 @@ public class SusStock extends JavaPlugin implements Listener {
         apiBase = getConfig().getString("api_base", "https://sus-stock-bot-production.up.railway.app");
         apiKey = getConfig().getString("api_key", "");
         getServer().getPluginManager().registerEvents(this, this);
+        // Auto-deliver pending website purchases to all online players every 30s
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            for (Player p : Bukkit.getOnlinePlayers()) claimRewards(p, false);
+        }, 600L, 600L);
         getLogger().info("SusStock enabled. API: " + apiBase);
     }
 
@@ -101,12 +105,6 @@ public class SusStock extends JavaPlugin implements Listener {
                     p.sendMessage("§cNot linked yet. Run /suslink <code> with a code from the website.");
                 }
             });
-            return true;
-        }
-
-        if (cmd.getName().equalsIgnoreCase("susclaim")) {
-            if (!(sender instanceof Player)) { sender.sendMessage("Players only."); return true; }
-            claimRewards((Player) sender, true);
             return true;
         }
 

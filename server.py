@@ -2418,7 +2418,7 @@ async function openStore() {
   const mcStatus = document.getElementById('store-mc-status');
   const mcItemsEl = document.getElementById('store-mc-items');
   if (me && me.mc_linked) {
-    mcStatus.textContent = 'Linked as ' + me.mc_linked + ' — items appear in-game (rejoin or /susclaim).';
+    mcStatus.textContent = 'Linked as ' + me.mc_linked + ' — items arrive in-game automatically within 30s.';
     const items = await fetch('/api/store/mc_items').then(r => r.ok ? r.json() : []).catch(() => []);
     mcItemsEl.innerHTML = items.map(it => `<button class="btn btn-buy" style="flex-direction:column;padding:8px;font-size:12px" onclick="buyMcItem('${it.key}')">${it.name}<span style="font-size:10px;color:var(--muted)">${fmt(it.cost)}</span></button>`).join('');
   } else {
@@ -2442,7 +2442,7 @@ function buyTimeout() { const t=document.getElementById('st-timeout-target').val
 function buyPin() { const channel_id=document.getElementById('st-pin-channel').value; const message=document.getElementById('st-pin-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/pin',{channel_id,message},'Message pinned!'); }
 function buyAnnounce() { const channel_id=document.getElementById('st-ann-channel').value; const message=document.getElementById('st-ann-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/announce',{channel_id,message},'Announcement posted!'); }
 function buyNews(positive) { const headline=document.getElementById('st-news').value.trim(); if(!headline){showToast('Enter a headline',false);return;} storeBuy('/api/store/news',{headline,positive},'Posted to market news!'); }
-function buyMcItem(item) { storeBuy('/api/store/mc_buy',{item},'Bought! Claim it in Minecraft (rejoin or /susclaim).'); }
+function buyMcItem(item) { storeBuy('/api/store/mc_buy',{item},'Bought! It will arrive in Minecraft within 30s.'); }
 
 // Live countdown on insider EARLY news items
 function updateEventCountdowns() {

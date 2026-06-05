@@ -11,9 +11,6 @@ commands:
   susbalance:
     description: Check your Sus Stock cash balance
     usage: /susbalance
-  susclaim:
-    description: Claim in-game items you bought on the website
-    usage: /susclaim
   susreward:
     description: (admin) give a player SUS cash
     usage: /susreward <player> <amount>

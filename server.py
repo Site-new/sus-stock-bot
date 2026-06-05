@@ -1705,6 +1705,7 @@ MC_STORE = {
     "diamonds":  {"name": "💎 32 Diamonds",       "cost": 6000,  "cmds": ["give %player% diamond 32"]},
     "gapples":   {"name": "🍎 16 Golden Apples",   "cost": 1000,  "cmds": ["give %player% golden_apple 16"]},
     "xp":        {"name": "✨ 30 XP Levels",       "cost": 2000,  "cmds": ["xp add %player% 30 levels"]},
+    "xpbottles": {"name": "🍾 64 XP Bottles",      "cost": 5000,  "cmds": ["give %player% experience_bottle 64"]},
     "shulker":   {"name": "📦 Shulker Box",        "cost": 10000, "cmds": ["give %player% shulker_box 1"]},
     "totem":     {"name": "🪬 Totem of Undying",   "cost": 4000,  "cmds": ["give %player% totem_of_undying 1"]},
     "elytra":    {"name": "🪽 Elytra",             "cost": 25000, "cmds": ["give %player% elytra 1"]},
@@ -1741,6 +1742,44 @@ def api_store_mc_buy():
     log_transaction(data, session["user_id"], "send", f"⛏️ Bought {item['name']}", -item["cost"])
     save_data(data)
     return jsonify({"ok": True})
+
+
+@app.route("/api/store/mc_checkout", methods=["POST"])
+def api_store_mc_checkout():
+    """Buy a cart of in-game items in one go."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    cart = request.json.get("cart", {})  # {item_key: qty}
+    if not cart:
+        return jsonify({"error": "cart is empty"}), 400
+    data = load_data()
+    uuid = mc_uuid_for(data, session["user_id"])
+    if not uuid:
+        return jsonify({"error": "Link your Minecraft account first"}), 400
+    total = 0
+    cmds = []
+    for key, qty in cart.items():
+        item = MC_STORE.get(key)
+        try:
+            qty = int(qty)
+        except Exception:
+            qty = 0
+        if not item or qty < 1:
+            continue
+        total += item["cost"] * qty
+        for _ in range(qty):
+            cmds.extend(item["cmds"])
+    if not cmds:
+        return jsonify({"error": "cart is empty"}), 400
+    u = get_user(data, session["user_id"])
+    if u["balance"] < total:
+        return jsonify({"error": f"Need {fmt(total)}, you have {fmt(u['balance'])}"}), 400
+    u["balance"] = round(u["balance"] - total, 2)
+    pending = data.setdefault("mc_pending", {}).setdefault(uuid, [])
+    pending.extend(cmds)
+    log_transaction(data, session["user_id"], "send", f"⛏️ Store checkout ({len(cmds)} item(s))", -total)
+    save_data(data)
+    return jsonify({"ok": True, "total": total, "balance": u["balance"]})
 
 
 @app.route("/api/mc/pending")
@@ -2310,6 +2349,7 @@ DASHBOARD_HTML = """
       <div style="font-weight:700;margin-bottom:4px">🎮 In-Game Items <span style="font-size:11px;color:var(--muted);font-weight:400">(delivered in Minecraft)</span></div>
       <div id="store-mc-status" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
       <div id="store-mc-items" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
+      <div id="store-cart" style="margin-top:10px"></div>
     </div>
 
     <div style="background:var(--surface2);border-radius:10px;padding:14px">
@@ -2419,12 +2459,51 @@ async function openStore() {
   const mcItemsEl = document.getElementById('store-mc-items');
   if (me && me.mc_linked) {
     mcStatus.textContent = 'Linked as ' + me.mc_linked + ' — items arrive in-game automatically within 30s.';
-    const items = await fetch('/api/store/mc_items').then(r => r.ok ? r.json() : []).catch(() => []);
-    mcItemsEl.innerHTML = items.map(it => `<button class="btn btn-buy" style="flex-direction:column;padding:8px;font-size:12px" onclick="buyMcItem('${it.key}')">${it.name}<span style="font-size:10px;color:var(--muted)">${fmt(it.cost)}</span></button>`).join('');
+    mcItemsCache = await fetch('/api/store/mc_items').then(r => r.ok ? r.json() : []).catch(() => []);
+    mcItemsEl.innerHTML = mcItemsCache.map(it => `<button class="btn btn-buy" style="flex-direction:column;padding:8px;font-size:12px" onclick="addToCart('${it.key}')">${it.name}<span style="font-size:10px;color:var(--muted)">${fmt(it.cost)}</span></button>`).join('');
+    renderCart();
   } else {
     mcStatus.innerHTML = '<span style="color:var(--red)">Link your Minecraft account (🟩 Link MC) to buy in-game items.</span>';
     mcItemsEl.innerHTML = '';
+    document.getElementById('store-cart').innerHTML = '';
   }
+}
+
+let cart = {};
+let mcItemsCache = [];
+function itemInfo(key) { return mcItemsCache.find(i => i.key === key) || {name:key, cost:0}; }
+function addToCart(key) { cart[key] = (cart[key]||0) + 1; renderCart(); }
+function removeFromCart(key) { if (cart[key]) { cart[key]--; if (cart[key] <= 0) delete cart[key]; } renderCart(); }
+function renderCart() {
+  const el = document.getElementById('store-cart');
+  if (!el) return;
+  const keys = Object.keys(cart);
+  if (!keys.length) { el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:6px">🛒 Cart is empty — tap items to add</div>'; return; }
+  let total = 0;
+  let rows = keys.map(k => {
+    const it = itemInfo(k); const line = it.cost * cart[k]; total += line;
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0">
+      <span style="flex:1">${it.name} ×${cart[k]}</span>
+      <span style="color:var(--muted)">${fmt(line)}</span>
+      <button onclick="removeFromCart('${k}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px">−</button>
+      <button onclick="addToCart('${k}')" style="background:none;border:none;color:var(--green);cursor:pointer;font-size:13px">+</button>
+    </div>`;
+  }).join('');
+  el.innerHTML = `<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">${rows}
+    <div style="display:flex;justify-content:space-between;font-weight:700;margin:8px 0;font-size:13px"><span>Total</span><span>${fmt(total)}</span></div>
+    <button class="btn btn-discord" style="width:100%" onclick="checkoutCart()">Checkout — ${fmt(total)}</button></div>`;
+}
+async function checkoutCart() {
+  const total = Object.keys(cart).reduce((s,k) => s + itemInfo(k).cost * cart[k], 0);
+  const summary = Object.keys(cart).map(k => `${itemInfo(k).name} ×${cart[k]}`).join('\\n');
+  if (!confirm(`Confirm purchase for ${fmt(total)}?\\n\\n${summary}`)) return;
+  const res = await fetch('/api/store/mc_checkout', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cart})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Purchased ${fmt(d.total)}! Items arrive in-game within 30s.`);
+  cart = {}; renderCart(); fetchMe();
+  const me = await fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null);
+  if (me) document.getElementById('store-balance').textContent = 'Your cash: ' + fmt(me.cash);
 }
 function closeStore() { document.getElementById('store-modal').style.display = 'none'; }
 
@@ -2442,7 +2521,6 @@ function buyTimeout() { const t=document.getElementById('st-timeout-target').val
 function buyPin() { const channel_id=document.getElementById('st-pin-channel').value; const message=document.getElementById('st-pin-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/pin',{channel_id,message},'Message pinned!'); }
 function buyAnnounce() { const channel_id=document.getElementById('st-ann-channel').value; const message=document.getElementById('st-ann-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/announce',{channel_id,message},'Announcement posted!'); }
 function buyNews(positive) { const headline=document.getElementById('st-news').value.trim(); if(!headline){showToast('Enter a headline',false);return;} storeBuy('/api/store/news',{headline,positive},'Posted to market news!'); }
-function buyMcItem(item) { storeBuy('/api/store/mc_buy',{item},'Bought! It will arrive in Minecraft within 30s.'); }
 
 // Live countdown on insider EARLY news items
 function updateEventCountdowns() {

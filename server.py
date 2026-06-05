@@ -1706,10 +1706,10 @@ MC_STORE = {
     "diamonds":  {"name": "💎 32 Diamonds",       "cost": 6000,  "cmds": ["give %player% diamond 32"]},
     "gapples":   {"name": "🍎 16 Golden Apples",   "cost": 1000,  "cmds": ["give %player% golden_apple 16"]},
     "xp":        {"name": "✨ 30 XP Levels",       "cost": 2000,  "cmds": ["xp add %player% 30 levels"]},
-    "xpbottles": {"name": "🍾 64 XP Bottles",      "cost": 5000,  "cmds": ["give %player% experience_bottle 64"]},
-    "shulker":   {"name": "📦 Shulker Box",        "cost": 10000, "cmds": ["give %player% shulker_box 1"]},
-    "totem":     {"name": "🪬 Totem of Undying",   "cost": 4000,  "cmds": ["give %player% totem_of_undying 1"]},
-    "elytra":    {"name": "🪽 Elytra",             "cost": 25000, "cmds": ["give %player% elytra 1"]},
+    "xpbottles": {"name": "🍾 64 XP Bottles",      "cost": 5000,  "cmds": ["@susitem:EXPERIENCE_BOTTLE:64"]},
+    "shulker":   {"name": "📦 Shulker Box",        "cost": 10000, "cmds": ["@susitem:SHULKER_BOX:1"]},
+    "totem":     {"name": "🪬 Totem of Undying",   "cost": 4000,  "cmds": ["@susitem:TOTEM_OF_UNDYING:1"]},
+    "elytra":    {"name": "🪽 Elytra",             "cost": 25000, "cmds": ["@susitem:ELYTRA:1"]},
 }
 
 def mc_uuid_for(data, discord_id):

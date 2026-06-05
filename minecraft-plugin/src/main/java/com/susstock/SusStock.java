@@ -1,13 +1,19 @@
 package com.susstock;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.OutputStream;
@@ -23,12 +29,14 @@ public class SusStock extends JavaPlugin implements Listener {
     private String apiKey;
     private volatile boolean netherUnlocked = false;
     private volatile boolean endUnlocked = false;
+    private NamespacedKey storeKey;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         apiBase = getConfig().getString("api_base", "https://sus-stock-bot-production.up.railway.app");
         apiKey = getConfig().getString("api_key", "");
+        storeKey = new NamespacedKey(this, "store");
         getServer().getPluginManager().registerEvents(this, this);
         // Auto-deliver pending website purchases to all online players every 30s
         Bukkit.getScheduler().runTaskTimer(this, () -> {
@@ -36,7 +44,56 @@ public class SusStock extends JavaPlugin implements Listener {
         }, 600L, 600L);
         // Poll server-wide dimension unlocks every 60s (and once now)
         Bukkit.getScheduler().runTaskTimer(this, this::pollUnlocks, 20L, 1200L);
+        // Strip store-only items obtained outside the store, every 3s
+        Bukkit.getScheduler().runTaskTimer(this, this::stripIllegalItems, 60L, 60L);
         getLogger().info("SusStock enabled. API: " + apiBase);
+    }
+
+    // Items that can ONLY be obtained from the website store
+    private boolean isStoreOnly(Material m) {
+        if (m == null) return false;
+        return m == Material.TOTEM_OF_UNDYING || m == Material.ELYTRA || m == Material.EXPERIENCE_BOTTLE;
+    }
+
+    private boolean isStoreTagged(ItemStack item) {
+        if (item == null || !item.hasItemMeta()) return false;
+        ItemMeta meta = item.getItemMeta();
+        return meta != null && meta.getPersistentDataContainer().has(storeKey, PersistentDataType.INTEGER);
+    }
+
+    private ItemStack makeStoreItem(Material m, int amount) {
+        ItemStack item = new ItemStack(m, amount);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.getPersistentDataContainer().set(storeKey, PersistentDataType.INTEGER, 1);
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+    private void stripIllegalItems() {
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            ItemStack[] contents = p.getInventory().getContents();
+            boolean removed = false;
+            for (int i = 0; i < contents.length; i++) {
+                ItemStack it = contents[i];
+                if (it != null && isStoreOnly(it.getType()) && !isStoreTagged(it)) {
+                    p.getInventory().setItem(i, null);
+                    removed = true;
+                }
+            }
+            if (removed) p.sendMessage("§cThat item can only be obtained from the Sus Stock store.");
+        }
+    }
+
+    @EventHandler
+    public void onCraft(CraftItemEvent e) {
+        Material m = e.getRecipe().getResult().getType();
+        if (m.name().contains("SHULKER_BOX")) {
+            e.setCancelled(true);
+            if (e.getWhoClicked() instanceof Player)
+                e.getWhoClicked().sendMessage("§cShulker Boxes can only be bought from the Sus Stock store.");
+        }
     }
 
     private void pollUnlocks() {
@@ -78,11 +135,22 @@ public class SusStock extends JavaPlugin implements Listener {
                 if (announce) p.sendMessage("§7No pending Sus Stock items.");
                 return;
             }
-            // Run console commands on the main thread
+            // Run on the main thread
             Bukkit.getScheduler().runTask(this, () -> {
                 for (String c : cmds) {
-                    String cmd = c.replace("%player%", p.getName());
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
+                    if (c.startsWith("@susitem:")) {
+                        // Tagged store-only item: @susitem:MATERIAL:AMOUNT
+                        String[] parts = c.substring(9).split(":");
+                        try {
+                            Material m = Material.valueOf(parts[0]);
+                            int amt = parts.length > 1 ? Integer.parseInt(parts[1]) : 1;
+                            p.getInventory().addItem(makeStoreItem(m, amt));
+                        } catch (Exception ex) {
+                            getLogger().warning("Bad susitem: " + c);
+                        }
+                    } else {
+                        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), c.replace("%player%", p.getName()));
+                    }
                 }
                 p.sendMessage("§a🎁 Delivered " + cmds.size() + " Sus Stock item(s)!");
             });

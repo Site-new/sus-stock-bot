@@ -227,12 +227,21 @@ def api_stock():
     market_open = hour >= 12
     cycle = data.get("bull_bear", "neutral")
     sentiment = data.get("sentiment", 50)
-    news = data.get("news_feed", [])[-10:]
+
+    # Insider ring members see news immediately; everyone else waits for public_at
+    is_insider = user_in_insider_ring(session.get("user_id"))
+    now = int(time.time())
+    all_news = data.get("news_feed", [])
+    if is_insider:
+        news = all_news[-10:]
+    else:
+        news = [n for n in all_news if n.get("public_at", n.get("ts", 0)) <= now][-10:]
+
     return jsonify({
         "price": price, "change": change, "change_pct": pct,
         "history": history[-100:], "timestamps": timestamps,
         "market_open": market_open, "bull_bear": cycle,
-        "sentiment": sentiment, "news": news,
+        "sentiment": sentiment, "news": news, "is_insider": is_insider,
     })
 
 
@@ -491,6 +500,20 @@ def api_chat_send():
 from companies import (load_companies, save_companies, company_value,
                        company_stock_price, create_company, is_ceo,
                        get_member, COMPANY_TYPES, COMPANY_COST, SHARES_ISSUED)
+
+
+def user_in_insider_ring(user_id):
+    """True if the user is a member of any Insider Trading Ring company."""
+    if not user_id:
+        return False
+    try:
+        companies = load_companies()
+        for c in companies.values():
+            if c.get("type") == "insider_ring" and str(user_id) in c.get("members", {}):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def enrich_company(c, sus_price):
@@ -1082,7 +1105,7 @@ DASHBOARD_HTML = """
   <!-- News column -->
   <div class="news-col">
     <div class="card" style="height:calc(100vh - 120px);overflow-y:auto;position:sticky;top:20px">
-      <div class="card-title">📰 Market News</div>
+      <div class="card-title" id="news-title">📰 Market News</div>
       <div id="news-feed"><div style="color:var(--muted);font-size:13px">No events yet — check back soon.</div></div>
     </div>
   </div>
@@ -1291,6 +1314,14 @@ async function fetchStock() {
     document.getElementById('sentiment-badge').textContent = `${sl} (${s})`;
   }
   // News ticker (top bar) + full news feed
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Insider badge on the news panel title
+  const newsTitle = document.getElementById('news-title');
+  if (newsTitle) {
+    newsTitle.innerHTML = d.is_insider
+      ? '📰 Market News <span style="font-size:9px;font-weight:700;background:#5865f2;color:#fff;padding:1px 6px;border-radius:999px;margin-left:4px">🔍 INSIDER</span>'
+      : '📰 Market News';
+  }
   if (d.news && d.news.length) {
     const latest = d.news[d.news.length - 1];
     const ticker = document.getElementById('news-ticker');
@@ -1303,10 +1334,12 @@ async function fetchStock() {
       feed.innerHTML = [...d.news].reverse().map(n => {
         const t = new Date(n.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
         const impact = n.impact ? ` <span style="font-size:11px;font-weight:700;color:${n.impact>0?'var(--green)':'var(--red)'}">${n.impact>0?'+':''}${n.impact.toFixed(1)}%</span>` : '';
-        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">
+        const isEarly = d.is_insider && (n.public_at || n.ts) > nowSec;
+        const earlyBadge = isEarly ? ` <span style="font-size:9px;font-weight:700;background:#5865f2;color:#fff;padding:1px 5px;border-radius:999px">EARLY</span>` : '';
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;${isEarly?'background:#5865f211;border-radius:6px;padding:8px':''}">
           <span style="font-size:18px;flex-shrink:0">${n.positive ? '📈' : '📉'}</span>
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;line-height:1.4">${n.headline}${impact}</div>
+            <div style="font-size:13px;line-height:1.4">${n.headline}${impact}${earlyBadge}</div>
             <div style="font-size:10px;color:var(--muted);margin-top:2px">${t}</div>
           </div>
         </div>`;

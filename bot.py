@@ -40,14 +40,17 @@ def is_market_open():
     """Open 12pm–12am CST."""
     return datetime.now(CST).hour >= 12
 
-def add_news_event(data, headline, positive, price_impact_pct):
-    """Append an event to the news feed stored in data.json."""
+def add_news_event(data, headline, positive, price_impact_pct, delay_public=True):
+    """Append an event to the news feed stored in data.json.
+    delay_public=True means non-insider users see it 5 minutes later."""
     events = data.get("news_feed", [])
+    now = int(time.time())
     events.append({
         "headline": headline,
         "positive": positive,
         "impact": round(price_impact_pct, 2),
-        "ts": int(time.time()),
+        "ts": now,
+        "public_at": now + 300 if delay_public else now,  # 5 min delay for public
     })
     data["news_feed"] = events[-50:]  # keep last 50
 
@@ -842,6 +845,18 @@ async def fluctuate_price():
         price = data["stock_price"]
         target = data.get("price_target", random.uniform(MIN_PRICE, MAX_PRICE))
 
+        # Apply any pending earnings whose 5-min delay has elapsed
+        now_ts = int(time.time())
+        earnings_impact = 0.0
+        still_pending = []
+        for pe in data.get("pending_earnings", []):
+            if now_ts >= pe.get("apply_at", 0):
+                earnings_impact += pe.get("impact_pct", 0) / 100.0
+                print(f"[earnings] applying {pe.get('impact_pct')}% now")
+            else:
+                still_pending.append(pe)
+        data["pending_earnings"] = still_pending
+
         # Bull/Bear cycle bias
         cycle = data.get("bull_bear", "neutral")
         bias = 0.025 if cycle == "bull" else (-0.025 if cycle == "bear" else 0)
@@ -862,9 +877,12 @@ async def fluctuate_price():
         else:
             change_pct = random.uniform(-volatility, volatility) + bias
 
+        # Fold in any earnings impact that just went public
+        change_pct += earnings_impact
+
         reversion = (target - price) * 0.04
         new_price = round(max(MIN_PRICE, min(MAX_PRICE, price * (1 + change_pct) + reversion)), 2)
-        if new_price == price:
+        if new_price == price and earnings_impact == 0:
             return
 
         # Stock split: if price >= 400, split 2-for-1
@@ -954,30 +972,25 @@ async def before_fluctuate():
 
 @tasks.loop(minutes=20)
 async def earnings_report():
-    """Post a random earnings report causing a price spike or drop."""
+    """Queue an earnings report. The price impact is delayed 5 minutes so
+    Insider Trading Ring members can act on the headline before it hits."""
     if not is_market_open():
         return
     data = load_data()
     positive = random.random() > 0.45
-    impact_pct = random.uniform(0.08, 0.25) if positive else random.uniform(-0.22, -0.08)
+    impact_pct = round((random.uniform(0.08, 0.25) if positive else random.uniform(-0.22, -0.08)) * 100, 2)
     headline = get_headline(positive)
-    price = data["stock_price"]
-    new_price = round(max(MIN_PRICE, min(MAX_PRICE, price * (1 + impact_pct))), 2)
-    data["stock_price"] = new_price
-    history = data.get("price_history", [])
-    history.append(new_price)
-    data["price_history"] = history[-200:]
-    timestamps = data.get("price_timestamps", [])
-    timestamps.append(datetime.now(CST).strftime("%H:%M"))
-    data["price_timestamps"] = timestamps[-200:]
-    add_news_event(data, f"📰 EARNINGS: {headline}", positive, impact_pct * 100)
+    now = int(time.time())
+
+    # Add news with 5-min public delay; insiders see it immediately
+    add_news_event(data, f"📰 EARNINGS: {headline}", positive, impact_pct, delay_public=True)
+    # Queue the price impact to apply when the news goes public (5 min later)
+    pending = data.get("pending_earnings", [])
+    pending.append({"impact_pct": impact_pct, "apply_at": now + 300})
+    data["pending_earnings"] = pending
+
     save_data(data)
-    print(f"[earnings] {'📈' if positive else '📉'} {impact_pct:.1%} — {headline}")
-    try:
-        await post_chart()
-        await post_leaderboard()
-    except Exception:
-        pass
+    print(f"[earnings] queued {'📈' if positive else '📉'} {impact_pct:.1f}% (applies in 5min) — {headline}")
 
 
 @earnings_report.before_loop

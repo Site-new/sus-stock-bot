@@ -174,6 +174,7 @@ public class SusStock extends JavaPlugin implements Listener {
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
             meta.getPersistentDataContainer().set(storeKey, PersistentDataType.INTEGER, 1);
+            meta.setLore(java.util.Collections.singletonList("§7(Store)"));
             item.setItemMeta(meta);
         }
         return item;

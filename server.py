@@ -1405,12 +1405,25 @@ def api_company_pay_protection(cid):
     return jsonify({"ok": True})
 
 
+CASINO_GAMES = {
+    "coinflip": {"name": "Coin Flip", "emoji": "🪙", "chance": 0.48, "payout": 2.0,  "desc": "48% to double"},
+    "highlow":  {"name": "High Card", "emoji": "🃏", "chance": 0.45, "payout": 2.1,  "desc": "45% to win 2.1×"},
+    "dice":     {"name": "Dice Roll", "emoji": "🎲", "chance": 0.33, "payout": 2.8,  "desc": "33% to win 2.8×"},
+    "roulette": {"name": "Roulette",  "emoji": "🎡", "chance": 0.25, "payout": 3.6,  "desc": "25% to win 3.6×"},
+    "slots":    {"name": "Slots",     "emoji": "🎰", "chance": 0.10, "payout": 8.0,  "desc": "10% to win 8× jackpot"},
+}
+
+
 @app.route("/api/companies/<cid>/gamble", methods=["POST"])
 def api_company_gamble(cid):
-    """Double-or-nothing against a Casino's treasury (47% win = 6% house edge)."""
+    """Gamble against a Casino's treasury across several games with different odds."""
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
     bet = float(request.json.get("bet", 0))
+    game_key = request.json.get("game", "coinflip")
+    game = CASINO_GAMES.get(game_key)
+    if not game:
+        return jsonify({"error": "unknown game"}), 400
     if bet <= 0:
         return jsonify({"error": "invalid bet"}), 400
     companies = load_companies()
@@ -1421,21 +1434,23 @@ def api_company_gamble(cid):
     u = get_user(data, session["user_id"])
     if u["balance"] < bet:
         return jsonify({"error": "not enough cash"}), 400
-    if c["treasury"] < bet:
+    win_profit = round(bet * (game["payout"] - 1), 2)  # net gain on a win
+    if c["treasury"] < win_profit:
         return jsonify({"error": "casino can't cover that bet"}), 400
     import random as _r
-    win = _r.random() < 0.47
+    win = _r.random() < game["chance"]
     if win:
-        u["balance"] = round(u["balance"] + bet, 2)
-        c["treasury"] = round(c["treasury"] - bet, 2)
-        log_transaction(data, session["user_id"], "receive", f"🎰 Won at {c['ticker']} casino", bet)
+        u["balance"] = round(u["balance"] + win_profit, 2)
+        c["treasury"] = round(c["treasury"] - win_profit, 2)
+        log_transaction(data, session["user_id"], "receive", f"🎰 Won {game['name']} at {c['ticker']}", win_profit)
     else:
         u["balance"] = round(u["balance"] - bet, 2)
         c["treasury"] = round(c["treasury"] + bet, 2)
-        log_transaction(data, session["user_id"], "send", f"🎰 Lost at {c['ticker']} casino", -bet)
+        log_transaction(data, session["user_id"], "send", f"🎰 Lost {game['name']} at {c['ticker']}", -bet)
     save_data(data)
     save_companies(companies)
-    return jsonify({"ok": True, "win": win, "bet": bet, "balance": u["balance"]})
+    return jsonify({"ok": True, "win": win, "bet": bet, "profit": win_profit,
+                    "game": game["name"], "balance": u["balance"]})
 
 
 # ── Dashboard ──────────────────────────────────────────────────────────────────
@@ -2463,15 +2478,18 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       <div style="font-size:12px;font-weight:700;margin-bottom:4px">💳 Investment Bank</div>
       <div style="font-size:11px;color:var(--muted)">Earns a 3% commission on <b>every company stock trade</b> across the whole market, paid into this treasury automatically. Treasury: <b>${fmt(c.treasury)}</b>.</div>
     </div>`;
-    case 'casino': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
-      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🎰 Casino — Double or Nothing</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Bet against the house: 47% chance to <b>double your bet</b>, 53% to lose it. Casino bankroll: <b>${fmt(c.treasury)}</b>.</div>
-      <div id="casino-result" style="font-size:14px;font-weight:800;text-align:center;margin-bottom:8px;min-height:20px"></div>
-      <div style="display:flex;gap:6px">
-        <input type="number" id="d-bet" class="trade-input" placeholder="Bet amount" min="1" style="flex:1;margin-bottom:0"/>
-        <button class="btn btn-buy" onclick="dGamble('${cid}')">🎲 Gamble</button>
+    case 'casino': {
+      const games = {coinflip:{name:'Coin Flip',emoji:'🪙',desc:'48% → 2×'},highlow:{name:'High Card',emoji:'🃏',desc:'45% → 2.1×'},dice:{name:'Dice Roll',emoji:'🎲',desc:'33% → 2.8×'},roulette:{name:'Roulette',emoji:'🎡',desc:'25% → 3.6×'},slots:{name:'Slots',emoji:'🎰',desc:'10% → 8×'}};
+      return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🎰 Casino</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Pick a game and bet against the house. Bankroll: <b>${fmt(c.treasury)}</b></div>
+      <div id="casino-result" style="font-size:15px;font-weight:800;text-align:center;margin-bottom:8px;min-height:22px"></div>
+      <input type="number" id="d-bet" class="trade-input" placeholder="Bet amount" min="1"/>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+        ${Object.entries(games).map(([k,g]) => `<button class="btn btn-buy" style="flex-direction:column;padding:8px;font-size:12px" onclick="dGamble('${cid}','${k}')">${g.emoji} ${g.name}<span style="font-size:9px;color:var(--muted);font-weight:400">${g.desc}</span></button>`).join('')}
       </div>
     </div>`;
+    }
     case 'lending_bank': return `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Loans (20% interest)</div>
       ${c._my_loan ? `<div style="color:var(--red);margin-bottom:6px;font-size:13px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-sell" style="width:100%" onclick="dRepayLoan('${cid}')">Repay Loan</button>`
@@ -2562,18 +2580,19 @@ async function dPostBounty(cid) { const t=document.getElementById('d-bounty-targ
 async function dSetSpread(cid) { const b=parseFloat(document.getElementById('d-spread-buy')?.value),s=parseFloat(document.getElementById('d-spread-sell')?.value); await dAction(`/api/companies/${cid}/set_spread`,{buy:b,sell:s},'Spread set!',cid); }
 async function dMmTrade(cid,action) { const s=parseInt(document.getElementById('d-mm-shares')?.value); if(!s){showToast('Enter shares',false);return;} await dAction(`/api/companies/${cid}/market_trade`,{action,shares:s},'Trade executed',cid); }
 async function dPayProtection(cid) { const a=parseFloat(document.getElementById('d-prot-amt')?.value||100); await dAction(`/api/companies/${cid}/pay_protection`,{amount:a},'Protection paid.',cid); }
-async function dGamble(cid) {
-  const bet = parseFloat(document.getElementById('d-bet')?.value);
+async function dGamble(cid, game) {
+  const betEl = document.getElementById('d-bet');
+  const bet = parseFloat(betEl?.value);
   if (!bet || bet <= 0) { showToast('Enter a bet', false); return; }
-  const res = await fetch(`/api/companies/${cid}/gamble`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({bet})});
+  const res = await fetch(`/api/companies/${cid}/gamble`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({bet, game})});
   const d = await res.json();
   if (!res.ok) { showToast(d.error, false); return; }
   const resEl = document.getElementById('casino-result');
   if (resEl) {
-    resEl.textContent = d.win ? `🎉 WIN! +${fmt(d.bet)}` : `💀 LOST ${fmt(d.bet)}`;
+    resEl.textContent = d.win ? `🎉 ${d.game} WIN! +${fmt(d.profit)}` : `💀 ${d.game} — lost ${fmt(d.bet)}`;
     resEl.style.color = d.win ? 'var(--green)' : 'var(--red)';
   }
-  showToast(d.win ? `You won ${fmt(d.bet)}!` : `You lost ${fmt(d.bet)}`, d.win);
+  showToast(d.win ? `Won ${fmt(d.profit)}!` : `Lost ${fmt(d.bet)}`, d.win);
   loadDrawerCompanies();
   fetchMe();
 }

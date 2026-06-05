@@ -2312,49 +2312,6 @@ DASHBOARD_HTML = """
       <div id="store-mc-items" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
     </div>
 
-    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
-      <div style="font-weight:700;margin-bottom:6px">🎨 Custom Colored Role — $4,000</div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <input id="st-role-name" class="trade-input" placeholder="Role name" maxlength="30" style="flex:1;margin-bottom:0"/>
-        <input id="st-role-color" type="color" value="#5865f2" style="width:44px;height:38px;border:none;background:none;cursor:pointer"/>
-        <button class="btn btn-discord" onclick="buyRole()">Buy</button>
-      </div>
-    </div>
-
-    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
-      <div style="font-weight:700;margin-bottom:6px">🏷️ Change Your Nickname — $5,000</div>
-      <div style="display:flex;gap:6px">
-        <input id="st-nick" class="trade-input" placeholder="New nickname" maxlength="32" style="flex:1;margin-bottom:0"/>
-        <button class="btn btn-discord" onclick="buyNick()">Buy</button>
-      </div>
-    </div>
-
-    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
-      <div style="font-weight:700;margin-bottom:6px">🔇 Timeout Someone (10 min) — $4,000</div>
-      <div style="display:flex;gap:6px">
-        <select id="st-timeout-target" class="trade-input" style="flex:1;margin-bottom:0"><option value="">Select user...</option></select>
-        <button class="btn btn-sell" onclick="buyTimeout()">Buy</button>
-      </div>
-    </div>
-
-    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
-      <div style="font-weight:700;margin-bottom:6px">📌 Pin a Message — $2,000</div>
-      <select id="st-pin-channel" class="trade-input"><option value="">Select channel...</option></select>
-      <div style="display:flex;gap:6px">
-        <input id="st-pin-msg" class="trade-input" placeholder="Message to pin" maxlength="300" style="flex:1;margin-bottom:0"/>
-        <button class="btn btn-discord" onclick="buyPin()">Buy</button>
-      </div>
-    </div>
-
-    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
-      <div style="font-weight:700;margin-bottom:6px">📢 @everyone Announcement — $10,000</div>
-      <select id="st-ann-channel" class="trade-input"><option value="">Select channel...</option></select>
-      <div style="display:flex;gap:6px">
-        <input id="st-ann-msg" class="trade-input" placeholder="Announcement text" maxlength="300" style="flex:1;margin-bottom:0"/>
-        <button class="btn btn-sell" onclick="buyAnnounce()">Buy</button>
-      </div>
-    </div>
-
     <div style="background:var(--surface2);border-radius:10px;padding:14px">
       <div style="font-weight:700;margin-bottom:6px">📰 Market News Post — $5,000</div>
       <input id="st-news" class="trade-input" placeholder="Headline for the market news feed" maxlength="140"/>
@@ -2468,15 +2425,6 @@ async function openStore() {
     mcStatus.innerHTML = '<span style="color:var(--red)">Link your Minecraft account (🟩 Link MC) to buy in-game items.</span>';
     mcItemsEl.innerHTML = '';
   }
-  // Fill user dropdown
-  if (!allUsersCache) allUsersCache = await fetch('/api/all_users').then(r => r.ok ? r.json() : []).catch(() => []);
-  const tsel = document.getElementById('st-timeout-target');
-  tsel.innerHTML = '<option value="">Select user...</option>' + allUsersCache.map(u => `<option value="${u.id}">${u.username}</option>`).join('');
-  // Fill channel dropdowns
-  const chans = await fetch('/api/store/channels').then(r => r.ok ? r.json() : []).catch(() => []);
-  const opts = '<option value="">Select channel...</option>' + chans.map(c => `<option value="${c.id}">#${c.name}</option>`).join('');
-  document.getElementById('st-pin-channel').innerHTML = opts;
-  document.getElementById('st-ann-channel').innerHTML = opts;
 }
 function closeStore() { document.getElementById('store-modal').style.display = 'none'; }
 

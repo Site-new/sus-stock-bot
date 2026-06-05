@@ -1473,6 +1473,216 @@ def api_company_gamble(cid):
                     "game": game["name"], "balance": u["balance"]})
 
 
+# ── Store (Discord-automated perks) ─────────────────────────────────────────────
+
+DISCORD_API = "https://discord.com/api/v10"
+_guild_id_cache = None
+
+def _dh():
+    return {"Authorization": f"Bot {DISCORD_BOT_TOKEN}", "Content-Type": "application/json"}
+
+def get_guild_id():
+    global _guild_id_cache
+    if _guild_id_cache:
+        return _guild_id_cache
+    if not DISCORD_BOT_TOKEN:
+        return None
+    try:
+        r = requests.get(f"{DISCORD_API}/users/@me/guilds", headers=_dh(), timeout=5)
+        g = r.json()
+        if isinstance(g, list) and g:
+            _guild_id_cache = g[0]["id"]
+            return _guild_id_cache
+    except Exception:
+        pass
+    return None
+
+def charge(data, uid, cost):
+    u = get_user(data, uid)
+    if u["balance"] < cost:
+        return False
+    u["balance"] = round(u["balance"] - cost, 2)
+    return True
+
+
+@app.route("/api/store/channels")
+def api_store_channels():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    gid = get_guild_id()
+    if not gid:
+        return jsonify([])
+    try:
+        r = requests.get(f"{DISCORD_API}/guilds/{gid}/channels", headers=_dh(), timeout=5)
+        chans = [{"id": c["id"], "name": c["name"]} for c in r.json() if c.get("type") == 0]
+        return jsonify(chans)
+    except Exception:
+        return jsonify([])
+
+
+@app.route("/api/store/role", methods=["POST"])
+def api_store_role():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    name = request.json.get("name", "").strip()[:30]
+    color = request.json.get("color", "#5865f2")
+    if not name:
+        return jsonify({"error": "enter a role name"}), 400
+    try:
+        color_int = int(str(color).lstrip("#"), 16)
+    except Exception:
+        color_int = 0
+    gid = get_guild_id()
+    if not gid:
+        return jsonify({"error": "Discord unavailable"}), 500
+    data = load_data()
+    if not charge(data, session["user_id"], 4000):
+        return jsonify({"error": "Need $4,000"}), 400
+    try:
+        rr = requests.post(f"{DISCORD_API}/guilds/{gid}/roles", headers=_dh(),
+                           json={"name": name, "color": color_int, "mentionable": True}, timeout=8)
+        if rr.status_code not in (200, 201):
+            return jsonify({"error": "Couldn't create role — bot needs Manage Roles"}), 500
+        role_id = rr.json()["id"]
+        ar = requests.put(f"{DISCORD_API}/guilds/{gid}/members/{session['user_id']}/roles/{role_id}",
+                          headers=_dh(), timeout=8)
+        if ar.status_code not in (200, 204):
+            return jsonify({"error": "Role made but couldn't assign (are you in the server?)"}), 500
+    except Exception as e:
+        return jsonify({"error": "Discord error"}), 500
+    log_transaction(data, session["user_id"], "send", f"Bought custom role '{name}'", -4000)
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/store/nickname", methods=["POST"])
+def api_store_nickname():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    nick = request.json.get("nick", "").strip()[:32]
+    if not nick:
+        return jsonify({"error": "enter a nickname"}), 400
+    gid = get_guild_id()
+    if not gid:
+        return jsonify({"error": "Discord unavailable"}), 500
+    data = load_data()
+    if not charge(data, session["user_id"], 5000):
+        return jsonify({"error": "Need $5,000"}), 400
+    try:
+        r = requests.patch(f"{DISCORD_API}/guilds/{gid}/members/{session['user_id']}",
+                           headers=_dh(), json={"nick": nick}, timeout=8)
+        if r.status_code not in (200, 204):
+            return jsonify({"error": "Couldn't set nickname — bot needs Manage Nicknames"}), 500
+    except Exception:
+        return jsonify({"error": "Discord error"}), 500
+    log_transaction(data, session["user_id"], "send", f"Changed nickname to '{nick}'", -5000)
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/store/timeout", methods=["POST"])
+def api_store_timeout():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    target = str(request.json.get("target_id", "")).strip()
+    if not target:
+        return jsonify({"error": "pick a target"}), 400
+    gid = get_guild_id()
+    if not gid:
+        return jsonify({"error": "Discord unavailable"}), 500
+    data = load_data()
+    if not charge(data, session["user_id"], 4000):
+        return jsonify({"error": "Need $4,000"}), 400
+    import datetime as _dt
+    until = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=5)).isoformat()
+    try:
+        r = requests.patch(f"{DISCORD_API}/guilds/{gid}/members/{target}", headers=_dh(),
+                           json={"communication_disabled_until": until}, timeout=8)
+        if r.status_code not in (200, 204):
+            return jsonify({"error": "Couldn't timeout — bot needs Moderate Members & higher role"}), 500
+    except Exception:
+        return jsonify({"error": "Discord error"}), 500
+    tname = get_discord_username(target) or "user"
+    log_transaction(data, session["user_id"], "send", f"Timed out {tname} (5m)", -4000)
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/store/pin", methods=["POST"])
+def api_store_pin():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    channel_id = str(request.json.get("channel_id", "")).strip()
+    message = request.json.get("message", "").strip()[:300]
+    if not channel_id or not message:
+        return jsonify({"error": "pick a channel and message"}), 400
+    data = load_data()
+    if not charge(data, session["user_id"], 2000):
+        return jsonify({"error": "Need $2,000"}), 400
+    sender = session.get("username", "Someone")
+    try:
+        mr = requests.post(f"{DISCORD_API}/channels/{channel_id}/messages", headers=_dh(),
+                           json={"content": f"📌 **{sender}:** {message}"}, timeout=8)
+        if mr.status_code not in (200, 201):
+            return jsonify({"error": "Couldn't post message"}), 500
+        msg_id = mr.json()["id"]
+        pr = requests.put(f"{DISCORD_API}/channels/{channel_id}/pins/{msg_id}", headers=_dh(), timeout=8)
+        if pr.status_code not in (200, 204):
+            return jsonify({"error": "Posted but couldn't pin — bot needs Manage Messages"}), 500
+    except Exception:
+        return jsonify({"error": "Discord error"}), 500
+    log_transaction(data, session["user_id"], "send", "Pinned a message", -2000)
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/store/announce", methods=["POST"])
+def api_store_announce():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    channel_id = str(request.json.get("channel_id", "")).strip()
+    message = request.json.get("message", "").strip()[:300]
+    if not channel_id or not message:
+        return jsonify({"error": "pick a channel and message"}), 400
+    data = load_data()
+    if not charge(data, session["user_id"], 10000):
+        return jsonify({"error": "Need $10,000"}), 400
+    sender = session.get("username", "Someone")
+    try:
+        r = requests.post(f"{DISCORD_API}/channels/{channel_id}/messages", headers=_dh(),
+                          json={"content": f"@everyone 📢 **{sender}** says: {message}",
+                                "allowed_mentions": {"parse": ["everyone"]}}, timeout=8)
+        if r.status_code not in (200, 201):
+            return jsonify({"error": "Couldn't post — bot needs Send Messages & Mention Everyone"}), 500
+    except Exception:
+        return jsonify({"error": "Discord error"}), 500
+    log_transaction(data, session["user_id"], "send", "Posted @everyone announcement", -10000)
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/store/news", methods=["POST"])
+def api_store_news():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    headline = request.json.get("headline", "").strip()[:140]
+    positive = bool(request.json.get("positive", True))
+    if not headline:
+        return jsonify({"error": "enter a headline"}), 400
+    data = load_data()
+    if not charge(data, session["user_id"], 5000):
+        return jsonify({"error": "Need $5,000"}), 400
+    sender = session.get("username", "Someone")
+    now = int(time.time())
+    events = data.get("news_feed", [])
+    events.append({"headline": f"📢 {sender}: {headline}", "positive": positive,
+                   "impact": 0, "ts": now, "public_at": now, "kind": "announcement"})
+    data["news_feed"] = events[-50:]
+    log_transaction(data, session["user_id"], "send", "Posted market news", -5000)
+    save_data(data)
+    return jsonify({"ok": True})
+
+
 # ── Dashboard ──────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -1608,6 +1818,7 @@ DASHBOARD_HTML = """
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
+  <button onclick="openStore()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🛒 Store</button>
   <button onclick="toggleHistory()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">📜 History</button>
   <button onclick="toggleCompanies()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🏢 Companies</button>
   <div class="auth-area" id="auth-area">
@@ -1774,6 +1985,69 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Store modal -->
+<div id="store-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:520px;max-width:95vw;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <span style="font-size:18px;font-weight:700">🛒 Sus Store</span>
+      <button onclick="closeStore()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div id="store-balance" style="font-size:12px;color:var(--muted);margin-bottom:14px">Your cash: —</div>
+
+    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="font-weight:700;margin-bottom:6px">🎨 Custom Colored Role — $4,000</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <input id="st-role-name" class="trade-input" placeholder="Role name" maxlength="30" style="flex:1;margin-bottom:0"/>
+        <input id="st-role-color" type="color" value="#5865f2" style="width:44px;height:38px;border:none;background:none;cursor:pointer"/>
+        <button class="btn btn-discord" onclick="buyRole()">Buy</button>
+      </div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="font-weight:700;margin-bottom:6px">🏷️ Change Your Nickname — $5,000</div>
+      <div style="display:flex;gap:6px">
+        <input id="st-nick" class="trade-input" placeholder="New nickname" maxlength="32" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-discord" onclick="buyNick()">Buy</button>
+      </div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="font-weight:700;margin-bottom:6px">🔇 Timeout Someone (5 min) — $4,000</div>
+      <div style="display:flex;gap:6px">
+        <select id="st-timeout-target" class="trade-input" style="flex:1;margin-bottom:0"><option value="">Select user...</option></select>
+        <button class="btn btn-sell" onclick="buyTimeout()">Buy</button>
+      </div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="font-weight:700;margin-bottom:6px">📌 Pin a Message — $2,000</div>
+      <select id="st-pin-channel" class="trade-input"><option value="">Select channel...</option></select>
+      <div style="display:flex;gap:6px">
+        <input id="st-pin-msg" class="trade-input" placeholder="Message to pin" maxlength="300" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-discord" onclick="buyPin()">Buy</button>
+      </div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="font-weight:700;margin-bottom:6px">📢 @everyone Announcement — $10,000</div>
+      <select id="st-ann-channel" class="trade-input"><option value="">Select channel...</option></select>
+      <div style="display:flex;gap:6px">
+        <input id="st-ann-msg" class="trade-input" placeholder="Announcement text" maxlength="300" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-sell" onclick="buyAnnounce()">Buy</button>
+      </div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:10px;padding:14px">
+      <div style="font-weight:700;margin-bottom:6px">📰 Market News Post — $5,000</div>
+      <input id="st-news" class="trade-input" placeholder="Headline for the market news feed" maxlength="140"/>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-buy" style="flex:1" onclick="buyNews(true)">📈 Good</button>
+        <button class="btn btn-sell" style="flex:1" onclick="buyNews(false)">📉 Bad</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1817,6 +2091,40 @@ function updateMarketTimer() {
 }
 updateMarketTimer();
 setInterval(updateMarketTimer, 1000);
+
+// ── Store ──────────────────────────────────────────────────────────────────────
+async function openStore() {
+  if (!myUserId) { showToast('Login first', false); return; }
+  document.getElementById('store-modal').style.display = 'flex';
+  // Fill balance
+  const me = await fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null);
+  if (me) document.getElementById('store-balance').textContent = 'Your cash: ' + fmt(me.cash);
+  // Fill user dropdown
+  if (!allUsersCache) allUsersCache = await fetch('/api/all_users').then(r => r.ok ? r.json() : []).catch(() => []);
+  const tsel = document.getElementById('st-timeout-target');
+  tsel.innerHTML = '<option value="">Select user...</option>' + allUsersCache.map(u => `<option value="${u.id}">${u.username}</option>`).join('');
+  // Fill channel dropdowns
+  const chans = await fetch('/api/store/channels').then(r => r.ok ? r.json() : []).catch(() => []);
+  const opts = '<option value="">Select channel...</option>' + chans.map(c => `<option value="${c.id}">#${c.name}</option>`).join('');
+  document.getElementById('st-pin-channel').innerHTML = opts;
+  document.getElementById('st-ann-channel').innerHTML = opts;
+}
+function closeStore() { document.getElementById('store-modal').style.display = 'none'; }
+
+async function storeBuy(url, body, msg) {
+  const res = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(msg); fetchMe();
+  const me = await fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null);
+  if (me) document.getElementById('store-balance').textContent = 'Your cash: ' + fmt(me.cash);
+}
+function buyRole() { const name=document.getElementById('st-role-name').value.trim(); const color=document.getElementById('st-role-color').value; if(!name){showToast('Enter a role name',false);return;} storeBuy('/api/store/role',{name,color},'Role created & assigned!'); }
+function buyNick() { const nick=document.getElementById('st-nick').value.trim(); if(!nick){showToast('Enter a nickname',false);return;} storeBuy('/api/store/nickname',{nick},'Nickname changed!'); }
+function buyTimeout() { const t=document.getElementById('st-timeout-target').value; if(!t){showToast('Pick a user',false);return;} storeBuy('/api/store/timeout',{target_id:t},'User timed out 5 min'); }
+function buyPin() { const channel_id=document.getElementById('st-pin-channel').value; const message=document.getElementById('st-pin-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/pin',{channel_id,message},'Message pinned!'); }
+function buyAnnounce() { const channel_id=document.getElementById('st-ann-channel').value; const message=document.getElementById('st-ann-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/announce',{channel_id,message},'Announcement posted!'); }
+function buyNews(positive) { const headline=document.getElementById('st-news').value.trim(); if(!headline){showToast('Enter a headline',false);return;} storeBuy('/api/store/news',{headline,positive},'Posted to market news!'); }
 
 // Live countdown on insider EARLY news items
 function updateEventCountdowns() {

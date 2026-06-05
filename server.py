@@ -226,6 +226,34 @@ def admin_verify():
     return jsonify({"ok": True, "verified": verified})
 
 
+@app.route("/api/admin/reset_market", methods=["POST"])
+def admin_reset_market():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    data = load_data()
+    for uid, u in list(data.get("users", {}).items()):
+        data["users"][uid] = {
+            "balance": STARTING_BALANCE, "shares": 0, "credit": 500,
+            "verified": u.get("verified", False), "banned_until": u.get("banned_until", 0),
+        }
+    data["stock_price"] = 50.0
+    data["price_history"] = [50.0]
+    data["price_timestamps"] = []
+    data["news_feed"] = []
+    data["shorts"] = {}
+    data["limit_orders"] = []
+    data["pending_earnings"] = []
+    data["pending_bull_bear"] = None
+    data["notifications"] = {}
+    data["history"] = {}
+    save_data(data)
+    try:
+        save_companies({})  # wipe all companies
+    except Exception:
+        pass
+    return jsonify({"ok": True})
+
+
 @app.route("/api/admin/ban", methods=["POST"])
 def admin_ban():
     if not is_admin():
@@ -3095,6 +3123,12 @@ async function loadAdmin() {
         </div>
       </div>
 
+      <div style="margin-bottom:14px;border:1px solid #ed424540;border-radius:8px;padding:10px">
+        <div class="stat-label" style="margin-bottom:6px;color:#ed4245">⚠️ Danger Zone</div>
+        <button class="btn btn-sell" style="width:100%;background:#ed424540" onclick="adminResetMarket()">🔄 Reset Entire Market</button>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px">Resets everyone to $1,000 / 0 shares, wipes the price, all companies, shorts, loans, and news. Keeps verified status and bans.</div>
+      </div>
+
       <div class="stat-label" style="margin-bottom:8px">Users</div>
       <div id="adm-users">`;
 
@@ -3165,6 +3199,15 @@ async function adminBan(uid, minutes, name) {
   const res = await fetch('/api/admin/ban', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid, minutes}) });
   const d = await res.json();
   if (d.ok) { showToast(`${name} ${d.result}`); loadAdmin(); }
+}
+
+async function adminResetMarket() {
+  if (!confirm('Reset the ENTIRE market? This wipes everyone\\'s money, all companies, and the stock price.')) return;
+  if (!confirm('Are you absolutely sure? This cannot be undone.')) return;
+  const res = await fetch('/api/admin/reset_market', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+  const d = await res.json();
+  if (d.ok) { showToast('Market reset complete'); loadAdmin(); fetchMe(); fetchStock(); fetchLeaderboard(); }
+  else { showToast(d.error || 'Reset failed', false); }
 }
 </script>
 </body>

@@ -339,11 +339,13 @@ def api_me():
         invested = round(acting.get("sus_shares", 0) * price, 2)
         cash = round(acting.get("treasury", 0), 2)
         net_worth = round(cash + invested, 2)
+        cshort = acting.get("short")
+        cshort_pnl = round((cshort["entry_price"] - price) * cshort["shares"], 2) if cshort else None
         return jsonify({
             "username": session["username"], "avatar": session.get("avatar"), "user_id": uid,
             "shares": acting.get("sus_shares", 0), "cash": cash, "invested": invested,
             "net_worth": net_worth, "pnl": 0, "price": price,
-            "short": None, "short_pnl": None, "limit_orders": [],
+            "short": cshort, "short_pnl": cshort_pnl, "limit_orders": [],
             "verified": u.get("verified", False), "is_admin": is_admin(),
             "acting_as": {"id": acting["id"], "name": acting["name"], "ticker": acting["ticker"]},
             "my_companies": my_companies,
@@ -442,9 +444,17 @@ def api_short():
         return jsonify({"error": "invalid amount"}), 400
     data = load_data()
     uid = session["user_id"]
+    price = data["stock_price"]
+    companies = load_companies()
+    acting, acting_id = get_acting_company(companies)
+    if acting:
+        if acting.get("short"):
+            return jsonify({"error": "Company already has an open short. Cover it first."}), 400
+        acting["short"] = {"shares": shares, "entry_price": price}
+        save_companies(companies)
+        return jsonify({"ok": True, "shares": shares, "entry_price": price})
     if uid in data.get("shorts", {}):
         return jsonify({"error": "You already have an open short. Cover it first."}), 400
-    price = data["stock_price"]
     get_user(data, uid)
     data.setdefault("shorts", {})[uid] = {"shares": shares, "entry_price": price}
     log_transaction(data, uid, "short", f"Shorted {shares} SUS @ {fmt(price)}", 0)
@@ -458,11 +468,21 @@ def api_cover():
         return jsonify({"error": "not logged in"}), 401
     data = load_data()
     uid = session["user_id"]
+    price = data["stock_price"]
+    companies = load_companies()
+    acting, acting_id = get_acting_company(companies)
+    if acting:
+        if not acting.get("short"):
+            return jsonify({"error": "Company has no open short."}), 400
+        cshort = acting.pop("short")
+        cpnl = round((cshort["entry_price"] - price) * cshort["shares"], 2)
+        acting["treasury"] = round(max(0, acting["treasury"] + cpnl), 2)
+        save_companies(companies)
+        return jsonify({"ok": True, "pnl": cpnl, "bonus": 0, "balance": acting["treasury"]})
     shorts = data.get("shorts", {})
     if uid not in shorts:
         return jsonify({"error": "No open short position."}), 400
     short = shorts.pop(uid)
-    price = data["stock_price"]
     pnl = round((short["entry_price"] - price) * short["shares"], 2)
     u = get_user(data, uid)
 
@@ -1976,7 +1996,7 @@ async function fetchMe() {
     </div>
     <!-- Trading tabs -->
     <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">
-      ${(u.acting_as ? ['Buy','Sell'] : (u.verified ? ['Buy','Sell','Short','Limits','Send'] : ['Buy','Sell','Short','Limits'])).map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="zoom-btn ${t==='Buy'?'active':''}" style="flex:1">${t}</button>`).join('')}
+      ${(u.acting_as ? ['Buy','Sell','Short'] : (u.verified ? ['Buy','Sell','Short','Limits','Send'] : ['Buy','Sell','Short','Limits'])).map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="zoom-btn ${t==='Buy'?'active':''}" style="flex:1">${t}</button>`).join('')}
     </div>
     ${u.verified ? '<div style="font-size:10px;color:var(--green);font-weight:700;margin-bottom:8px">✓ VERIFIED ACCOUNT</div>' : ''}
 

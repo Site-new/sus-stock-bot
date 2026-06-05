@@ -1863,6 +1863,7 @@ MC_STORE = {
     "shulker":   {"name": "📦 Shulker Box",        "cost": 10000, "cmds": ["@susitem:SHULKER_BOX:1"]},
     "totem":     {"name": "🪬 Totem of Undying",   "cost": 4000,  "cmds": ["@susitem:TOTEM_OF_UNDYING:1"]},
     "elytra":    {"name": "🪽 Elytra",             "cost": 25000, "cmds": ["@susitem:ELYTRA:1"]},
+    "netherite": {"name": "🪓 Netherite Ingot",    "cost": 40000, "cmds": ["@susitem:NETHERITE_INGOT:1"]},
 }
 
 def mc_uuid_for(data, discord_id):

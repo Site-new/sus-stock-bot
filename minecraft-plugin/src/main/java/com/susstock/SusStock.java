@@ -14,6 +14,7 @@ import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
+import org.bukkit.event.inventory.PrepareSmithingEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.inventory.Inventory;
@@ -158,7 +159,8 @@ public class SusStock extends JavaPlugin implements Listener {
     // Items that can ONLY be obtained from the website store
     private boolean isStoreOnly(Material m) {
         if (m == null) return false;
-        return m == Material.TOTEM_OF_UNDYING || m == Material.ELYTRA || m == Material.EXPERIENCE_BOTTLE;
+        return m == Material.TOTEM_OF_UNDYING || m == Material.ELYTRA
+            || m == Material.EXPERIENCE_BOTTLE || m == Material.NETHERITE_INGOT;
     }
 
     private boolean isStoreTagged(ItemStack item) {
@@ -217,6 +219,17 @@ public class SusStock extends JavaPlugin implements Listener {
         java.util.Map<Enchantment, Integer> before = (first != null) ? first.getEnchantments() : new java.util.HashMap<>();
         for (java.util.Map.Entry<Enchantment, Integer> en : result.getEnchantments().entrySet()) {
             if (en.getValue() > before.getOrDefault(en.getKey(), 0)) {
+                e.setResult(null);
+                return;
+            }
+        }
+    }
+
+    @EventHandler
+    public void onSmithing(PrepareSmithingEvent e) {
+        // Block netherite upgrades unless the ingot used was bought from the store
+        for (ItemStack item : e.getInventory().getContents()) {
+            if (item != null && item.getType() == Material.NETHERITE_INGOT && !isStoreTagged(item)) {
                 e.setResult(null);
                 return;
             }

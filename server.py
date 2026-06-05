@@ -1943,9 +1943,9 @@ async function loadDrawerCompanies() {
           <div style="font-size:10px;color:var(--muted)">per share</div>
         </div>
       </div>
-      <div style="display:flex;gap:12px;font-size:12px;color:var(--muted)">
+      <div style="display:flex;gap:12px;font-size:12px;color:var(--muted);flex-wrap:wrap">
         <span>Treasury: <b style="color:var(--text)">${fmt(c.treasury)}</b></span>
-        <span>Value: <b style="color:var(--text)">${fmt(c.value)}</b></span>
+        <span>SUS: <b style="color:var(--text)">${c.sus_shares || 0}</b></span>
         <span>Members: <b style="color:var(--text)">${c.member_count}</b></span>
       </div>
       ${c.description ? `<div style="font-size:11px;color:var(--muted);margin-top:6px">${c.description}</div>` : ''}
@@ -1971,7 +1971,7 @@ async function openDrawerCompany(cid) {
     ${c.description ? `<div style="font-size:12px;color:var(--muted);margin-bottom:14px">${c.description}</div>` : ''}
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">
-      ${[['Stock Price', fmt(c._stock_price)], ['Company Value', fmt(c._value)], ['Treasury', fmt(c.treasury)], ['Your Shares', c._my_shares || 0]].map(([l,v]) =>
+      ${[['Stock Price', fmt(c._stock_price)], ['Company Value', fmt(c._value)], ['Treasury', fmt(c.treasury)], ['SUS Held', (c.sus_shares || 0) + ' shares'], ['Your Shares', c._my_shares || 0]].map(([l,v]) =>
         `<div style="background:var(--surface);border-radius:8px;padding:10px 12px"><div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">${l}</div><div style="font-size:16px;font-weight:700">${v}</div></div>`
       ).join('')}
     </div>

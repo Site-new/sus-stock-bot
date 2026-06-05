@@ -1254,6 +1254,9 @@ def api_company_buy_upgrade(cid):
     c = companies.get(cid)
     if not c or not is_ceo(c, session["user_id"]):
         return jsonify({"error": "CEO only"}), 403
+    now_u = int(time.time())
+    if now_u - c.get("last_upgrade", 0) < 10:
+        return jsonify({"error": f"Slow down — wait {10 - (now_u - c.get('last_upgrade', 0))}s"}), 429
     up = request.json.get("upgrade", "")
     ups = c.setdefault("upgrades", {"vault": 0, "marketing": 0})
     if up == "vault":
@@ -1276,6 +1279,7 @@ def api_company_buy_upgrade(cid):
         ups["marketing"] = lvl + 1
     else:
         return jsonify({"error": "unknown upgrade"}), 400
+    c["last_upgrade"] = now_u
     save_companies(companies)
     return jsonify({"ok": True})
 

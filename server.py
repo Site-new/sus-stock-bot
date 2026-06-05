@@ -1214,8 +1214,6 @@ DASHBOARD_HTML = """
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <div class="card-title" style="margin-bottom:0">SUS / USD</div>
         <span id="market-badge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:#57f28722;color:var(--green)">🟢 OPEN</span>
-        <span id="cycle-badge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--surface2);color:var(--muted)">😐 Neutral</span>
-        <span id="sentiment-badge" style="font-size:10px;padding:2px 8px;border-radius:999px;background:var(--surface2);color:var(--muted);margin-left:auto">Sentiment 50</span>
       </div>
       <div class="price-hero">
         <span class="price" id="price">—</span>
@@ -1399,23 +1397,12 @@ async function fetchStock() {
   fullTimestamps = timestamps || [];
   renderChart();
 
-  // Market status badges
+  // Market status badge
   const mb = document.getElementById('market-badge');
-  if (d.market_open !== undefined) {
+  if (mb && d.market_open !== undefined) {
     mb.textContent = d.market_open ? '🟢 OPEN' : '🔴 CLOSED';
     mb.style.background = d.market_open ? '#57f28722' : '#ed424522';
     mb.style.color = d.market_open ? 'var(--green)' : 'var(--red)';
-  }
-  const cb = document.getElementById('cycle-badge');
-  if (d.bull_bear) {
-    const cycleMap = {bull: '🐂 Bull', bear: '🐻 Bear', neutral: '😐 Neutral'};
-    cb.textContent = cycleMap[d.bull_bear] || '😐 Neutral';
-    cb.style.color = d.bull_bear === 'bull' ? 'var(--green)' : (d.bull_bear === 'bear' ? 'var(--red)' : 'var(--muted)');
-  }
-  if (d.sentiment !== undefined) {
-    const s = d.sentiment;
-    const sl = s > 75 ? 'Extreme Greed 😏' : s > 55 ? 'Greed 😌' : s < 25 ? 'Extreme Fear 😱' : s < 45 ? 'Fear 😰' : 'Neutral 😐';
-    document.getElementById('sentiment-badge').textContent = `${sl} (${s})`;
   }
   // News ticker (top bar) + full news feed
   const nowSec = Math.floor(Date.now() / 1000);

@@ -953,7 +953,7 @@ def api_companies():
             "stock_price": company_stock_price(c, sus_price),
             "shares_issued": c.get("shares_issued", SHARES_ISSUED),
             "description": c.get("description", ""),
-            "marketing": c.get("upgrades", {}).get("marketing", False),
+            "marketing": bool(c.get("upgrades", {}).get("marketing", 0)),
         })
     # Marketing-upgraded companies float to the top, then by value
     result.sort(key=lambda x: (x.get("marketing", False), x["value"]), reverse=True)
@@ -1241,10 +1241,9 @@ def api_company_set_salary(cid):
     return jsonify({"ok": True})
 
 
-UPGRADES = {
-    "vault":     {"name": "Treasury Vault", "max": 5, "base": 10000, "desc": "+0.5% treasury interest per cycle, per level"},
-    "marketing": {"name": "Marketing Dept", "cost": 15000, "desc": "Highlights your company at the top of the list"},
-}
+def _mkt_level(c):
+    m = c.get("upgrades", {}).get("marketing", 0)
+    return 1 if m is True else int(m or 0)  # migrate legacy bool
 
 
 @app.route("/api/companies/<cid>/buy_upgrade", methods=["POST"])
@@ -1256,26 +1255,40 @@ def api_company_buy_upgrade(cid):
     if not c or not is_ceo(c, session["user_id"]):
         return jsonify({"error": "CEO only"}), 403
     up = request.json.get("upgrade", "")
-    ups = c.setdefault("upgrades", {"vault": 0, "marketing": False})
+    ups = c.setdefault("upgrades", {"vault": 0, "marketing": 0})
     if up == "vault":
         lvl = ups.get("vault", 0)
-        if lvl >= UPGRADES["vault"]["max"]:
+        if lvl >= 5:
             return jsonify({"error": "max level"}), 400
-        cost = UPGRADES["vault"]["base"] * (lvl + 1)
+        cost = 10000 * (lvl + 1)
         if c["treasury"] < cost:
             return jsonify({"error": f"Treasury needs {fmt(cost)}"}), 400
         c["treasury"] = round(c["treasury"] - cost, 2)
         ups["vault"] = lvl + 1
     elif up == "marketing":
-        if ups.get("marketing"):
-            return jsonify({"error": "already owned"}), 400
-        cost = UPGRADES["marketing"]["cost"]
+        lvl = _mkt_level(c)
+        if lvl >= 5:
+            return jsonify({"error": "max level"}), 400
+        cost = 15000 * (lvl + 1)
         if c["treasury"] < cost:
             return jsonify({"error": f"Treasury needs {fmt(cost)}"}), 400
         c["treasury"] = round(c["treasury"] - cost, 2)
-        ups["marketing"] = True
+        ups["marketing"] = lvl + 1
     else:
         return jsonify({"error": "unknown upgrade"}), 400
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/set_ad", methods=["POST"])
+def api_company_set_ad(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    c["ad_text"] = request.json.get("ad_text", "").strip()[:140]
     save_companies(companies)
     return jsonify({"ok": True})
 
@@ -3435,10 +3448,19 @@ async function openDrawerCompany(cid) {
         <span>🏦 Treasury Vault Lv.${(c.upgrades||{}).vault||0}/5 <span style="color:var(--muted)">+${0.5*((c.upgrades||{}).vault||0)}%/cycle</span></span>
         ${((c.upgrades||{}).vault||0) < 5 ? `<button class="btn btn-buy" style="padding:4px 8px;font-size:11px" onclick="dBuyUpgrade('${cid}','vault')">Upgrade (${fmt(10000*(((c.upgrades||{}).vault||0)+1))})</button>` : '<span style="color:var(--green);font-size:11px">MAX</span>'}
       </div>
-      <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0">
-        <span>📣 Marketing Dept ${(c.upgrades||{}).marketing?'✅':''}</span>
-        ${!(c.upgrades||{}).marketing ? `<button class="btn btn-buy" style="padding:4px 8px;font-size:11px" onclick="dBuyUpgrade('${cid}','marketing')">Buy (${fmt(15000)})</button>` : '<span style="color:var(--green);font-size:11px">OWNED</span>'}
-      </div>
+      ${(() => {
+        const mraw = (c.upgrades||{}).marketing;
+        const mlvl = mraw === true ? 1 : (parseInt(mraw)||0);
+        const intervalHrs = mlvl > 0 ? (6 - mlvl) : null;
+        return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0">
+          <span>📣 Marketing Dept Lv.${mlvl}/5 ${mlvl>0?`<span style="color:var(--muted)">ad every ${intervalHrs}h</span>`:''}</span>
+          ${mlvl < 5 ? `<button class="btn btn-buy" style="padding:4px 8px;font-size:11px" onclick="dBuyUpgrade('${cid}','marketing')">${mlvl===0?'Buy':'Upgrade'} (${fmt(15000*(mlvl+1))})</button>` : '<span style="color:var(--green);font-size:11px">MAX</span>'}
+        </div>
+        ${mlvl > 0 ? `<div style="display:flex;gap:6px;margin-top:4px">
+          <input type="text" id="d-ad-input" class="trade-input" placeholder="Your ad text..." value="${(c.ad_text||'').replace(/"/g,'&quot;')}" maxlength="140" style="flex:1;margin-bottom:0;font-size:12px;padding:4px 8px"/>
+          <button class="btn btn-discord" style="padding:4px 8px;font-size:11px" onclick="dSetAd('${cid}')">Save Ad</button>
+        </div>` : ''}`;
+      })()}
     </div>` : ''}
 
     ${c.type === 'insider_ring' ? `<div style="margin-bottom:12px">
@@ -3615,6 +3637,7 @@ async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
 async function dSetSalary(cid, uid) { const s=parseFloat(document.getElementById('sal-'+uid)?.value)||0; await dAction(`/api/companies/${cid}/set_salary`,{user_id:uid,salary:s},'Salary set',cid); }
 async function dBuyUpgrade(cid, upgrade) { await dAction(`/api/companies/${cid}/buy_upgrade`,{upgrade},'Upgrade purchased!',cid); }
+async function dSetAd(cid) { const ad=document.getElementById('d-ad-input')?.value||''; await dAction(`/api/companies/${cid}/set_ad`,{ad_text:ad},'Ad saved',cid); }
 async function dDistribute(cid) { const a=parseFloat(document.getElementById('d-dist-amt')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/distribute`,{amount:a},'Profits distributed!',cid); }
 async function dPostNews(cid, positive) { const h=document.getElementById('d-news-input')?.value.trim(); if(!h){showToast('Enter a headline',false);return;} await dAction(`/api/companies/${cid}/post_news`,{headline:h,positive},'Announcement posted!',cid); }
 async function dGrantFree(cid) { const t=document.getElementById('d-free-input')?.value.trim(); if(!t){showToast('Pick a user',false);return;} await dAction(`/api/companies/${cid}/grant_free`,{user_id:t},'Free access granted!',cid); }

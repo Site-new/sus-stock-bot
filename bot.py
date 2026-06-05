@@ -722,6 +722,18 @@ async def process_companies():
                 c["treasury"] = round(c["treasury"] * (1 + 0.005 * vlvl), 2)
                 changed = True
 
+            # ── Marketing Dept: auto-post an ad to market news ───────────────
+            mraw = c.get("upgrades", {}).get("marketing", 0)
+            mlvl = 1 if mraw is True else int(mraw or 0)
+            ad = c.get("ad_text", "").strip()
+            if mlvl > 0 and ad:
+                interval = (6 - mlvl) * 3600  # L1=5h, L5=1h
+                now_t = int(time.time())
+                if now_t - c.get("last_ad", 0) >= interval:
+                    c["last_ad"] = now_t
+                    add_news_event(data, f"📣 AD · {c['name']}: {ad}", True, 0, delay_public=False)
+                    changed = True
+
             # ── Insider Ring: charge subscribers their hourly fee when due ─────
             if ctype == "insider_ring":
                 sub_price = c.get("sub_price", 0)

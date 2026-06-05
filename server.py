@@ -1799,7 +1799,7 @@ def api_mc_pending():
 
 DEFAULT_UNLOCKS = {
     "nether": {"name": "The Nether", "emoji": "🔥", "goal": 100000},
-    "end":    {"name": "The End",    "emoji": "🐉", "goal": 250000},
+    "end":    {"name": "The End",    "emoji": "🐉", "goal": 10000000},
 }
 
 def get_unlocks(data):

@@ -160,7 +160,7 @@ public class SusStock extends JavaPlugin implements Listener {
     private boolean isStoreOnly(Material m) {
         if (m == null) return false;
         return m == Material.TOTEM_OF_UNDYING || m == Material.ELYTRA
-            || m == Material.EXPERIENCE_BOTTLE || m == Material.NETHERITE_INGOT;
+            || m == Material.EXPERIENCE_BOTTLE;
     }
 
     private boolean isStoreTagged(ItemStack item) {

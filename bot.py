@@ -823,7 +823,7 @@ async def process_companies():
             if ctype == "savings":
                 for uid, dep_amount in c.get("deposits", {}).items():
                     if dep_amount > 0 and uid in data.get("users", {}):
-                        interest = round(dep_amount * 0.01, 2)
+                        interest = round(dep_amount * 0.0033, 2)  # ~1% per hour (paid each 20min cycle)
                         c["treasury"] = round(c["treasury"] - interest, 2)
                         data["users"][uid]["balance"] = round(data["users"][uid]["balance"] + interest, 2)
                 changed = True

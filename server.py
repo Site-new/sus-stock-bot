@@ -3540,7 +3540,7 @@ async function loadHistory() {
 }
 
 // ── Companies drawer ───────────────────────────────────────────────────────────
-const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 1% every 20min on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."}};
+const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 1% per hour on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."}};
 let companiesOpen = false;
 let detailOpen = false;
 let dcSelectedType = null;
@@ -3785,7 +3785,7 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       : `<input type="number" id="d-loan-amt" class="trade-input" placeholder="Loan amount"/><button class="btn btn-discord" style="width:100%" onclick="dRequestLoan('${cid}')">Request Loan</button>`}
     </div>`;
     case 'savings': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
-      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🐷 Savings — 1% per 20min</div>
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">🐷 Savings — 1% per hour</div>
       <div style="font-size:13px;color:var(--green)">Your deposit: ${fmt(c._my_deposit||0)}</div>
       <div style="font-size:11px;color:var(--muted)">Deposit to treasury to earn interest automatically.</div>
     </div>`;
@@ -4322,7 +4322,7 @@ function buildTypePanel(c, isMember, isCeo) {
       ${c._my_loan ? `<div style="color:var(--red);margin-bottom:8px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-red" style="width:100%" onclick="repayLoan('${cid}')">Repay Loan</button>` :
       `<input type="number" id="loan-amt" placeholder="Loan amount"/><button class="btn btn-primary" style="width:100%" onclick="requestLoan('${cid}')">Request Loan (8% interest)</button>`}</div>`;
     case 'savings': return `
-      <div><div class="card-title">Savings (1% per 20min)</div>
+      <div><div class="card-title">Savings (1% per hour)</div>
       <div style="margin-bottom:8px;color:var(--green)">Your deposit: ${fmt(c._my_deposit || 0)}</div>
       <div style="font-size:11px;color:var(--muted)">Deposit into treasury to earn interest automatically.</div></div>`;
     case 'insurance': return `
@@ -4679,7 +4679,7 @@ GUIDE_HTML = """
   <h3>🐷 Savings Account <span class="tag passive">Passive</span></h3>
   <p>A safe place to park cash and earn guaranteed interest.</p>
   <ul>
-    <li>Deposit cash and earn <b>1% every 20 minutes</b>, paid from the treasury.</li>
+    <li>Deposit cash and earn <b>1% per hour</b>, paid from the treasury.</li>
     <li>No risk to the depositor — interest is guaranteed while the treasury can pay.</li>
   </ul>
   <p class="muted">Low risk, slow steady growth.</p>

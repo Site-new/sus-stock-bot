@@ -1466,6 +1466,20 @@ function updateMarketTimer() {
 }
 updateMarketTimer();
 setInterval(updateMarketTimer, 1000);
+
+// Live countdown on insider EARLY news items
+function updateEventCountdowns() {
+  const now = Date.now() / 1000;
+  document.querySelectorAll('.event-countdown').forEach(el => {
+    const publicAt = parseInt(el.dataset.public);
+    let remain = Math.max(0, Math.round(publicAt - now));
+    if (remain <= 0) { el.textContent = '⚡ NOW'; return; }
+    const mm = String(Math.floor(remain / 60)).padStart(2, '0');
+    const ss = String(remain % 60).padStart(2, '0');
+    el.textContent = `⏳ ${mm}:${ss}`;
+  });
+}
+setInterval(updateEventCountdowns, 1000);
 let myUserId = null;
 
 function showToast(msg, ok=true) {
@@ -1545,8 +1559,9 @@ async function fetchStock() {
       feed.innerHTML = [...d.news].reverse().map(n => {
         const t = new Date(n.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
         const impact = n.impact ? ` <span style="font-size:11px;font-weight:700;color:${n.impact>0?'var(--green)':'var(--red)'}">${n.impact>0?'+':''}${n.impact.toFixed(1)}%</span>` : '';
-        const isEarly = d.is_insider && (n.public_at || n.ts) > nowSec;
-        const earlyBadge = isEarly ? ` <span style="font-size:9px;font-weight:700;background:#5865f2;color:#fff;padding:1px 5px;border-radius:999px">EARLY</span>` : '';
+        const publicAt = n.public_at || n.ts;
+        const isEarly = d.is_insider && publicAt > nowSec;
+        const earlyBadge = isEarly ? ` <span style="font-size:9px;font-weight:700;background:#5865f2;color:#fff;padding:1px 5px;border-radius:999px">EARLY</span> <span class="event-countdown" data-public="${publicAt}" style="font-size:10px;font-weight:700;color:#5865f2">⏳ --:--</span>` : '';
         return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;${isEarly?'background:#5865f211;border-radius:6px;padding:8px':''}">
           <span style="font-size:18px;flex-shrink:0">${n.positive ? '📈' : '📉'}</span>
           <div style="flex:1;min-width:0">

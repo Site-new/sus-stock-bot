@@ -760,6 +760,19 @@ def api_company_set_sub_price(cid):
     return jsonify({"ok": True, "sub_price": c["sub_price"]})
 
 
+@app.route("/api/companies/<cid>/set_description", methods=["POST"])
+def api_company_set_description(cid):
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    c["description"] = request.json.get("description", "").strip()[:200]
+    save_companies(companies)
+    return jsonify({"ok": True, "description": c["description"]})
+
+
 @app.route("/api/companies/<cid>/deposit", methods=["POST"])
 def api_company_deposit(cid):
     if "user_id" not in session:
@@ -1969,6 +1982,13 @@ async function openDrawerCompany(cid) {
 
     ${isCeo ? `
     <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">CEO — Edit Description</div>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="d-desc-input" class="trade-input" placeholder="New description" value="${(c.description||'').replace(/"/g,'&quot;')}" maxlength="200" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-discord" onclick="dSetDescription('${cid}')">Save</button>
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">CEO — Trade SUS (holds ${c.sus_shares||0} shares)</div>
       <div style="display:flex;gap:6px">
         <input type="number" id="d-sus-shares" class="trade-input" placeholder="SUS shares" style="flex:1;margin-bottom:0"/>
@@ -2080,6 +2100,7 @@ async function dPayProtection(cid) { const a=parseFloat(document.getElementById(
 async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`,{},'Subscribed to insider ring!',cid); }
 async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
+async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
 
 // Create company
 function showCreateDrawer() {

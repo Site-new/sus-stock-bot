@@ -1578,7 +1578,7 @@ setInterval(fetchStock, 10000);
 setInterval(fetchMe, 15000);
 
 // ── Companies drawer ───────────────────────────────────────────────────────────
-const COMPANY_TYPES_MAP = ${json.dumps({k: {"name": v["name"], "emoji": v["emoji"], "desc": v["desc"]} for k, v in COMPANY_TYPES.items()})};
+const COMPANY_TYPES_MAP = {"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 3% every 20min on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."}};
 let companiesOpen = false;
 let detailOpen = false;
 let dcSelectedType = null;
@@ -2009,7 +2009,7 @@ async function init() {
 }
 
 function buildTypeGrid() {
-  const types = ${json.dumps({k: {"name": v["name"], "emoji": v["emoji"], "desc": v["desc"]} for k, v in COMPANY_TYPES.items()})};
+  const types = COMPANY_TYPES_MAP;
   const grid = document.getElementById('type-grid');
   grid.innerHTML = Object.entries(types).map(([k,v]) => `
     <div class="type-option" onclick="selectType('${k}',this)">
@@ -2031,7 +2031,7 @@ async function loadCompanies() {
 }
 
 function renderCompanies() {
-  const types = ${json.dumps({k: {"name": v["name"], "emoji": v["emoji"]} for k, v in COMPANY_TYPES.items()})};
+  const types = COMPANY_TYPES_MAP;
   const grid = document.getElementById('companies-grid');
   if (!allCompanies.length) { grid.innerHTML = '<div style="color:var(--muted);padding:20px">No companies yet. Be the first to found one!</div>'; return; }
   grid.innerHTML = allCompanies.map(c => {
@@ -2058,7 +2058,7 @@ function renderCompanies() {
 
 async function openCompany(cid) {
   const c = await fetch(`/api/companies/${cid}`).then(r => r.json());
-  const types = ${json.dumps({k: {"name": v["name"], "emoji": v["emoji"]} for k, v in COMPANY_TYPES.items()})};
+  const types = COMPANY_TYPES_MAP;
   const t = types[c.type] || {name:c.type, emoji:'🏢'};
   const isMember = c._is_member;
   const isCeo = c._is_ceo;

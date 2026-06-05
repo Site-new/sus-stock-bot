@@ -99,6 +99,31 @@ def send_limit(score):
     return 1000
 
 
+def is_banned(u):
+    """True if user is permanently or temporarily banned."""
+    b = u.get("banned_until", 0)
+    if b == -1:
+        return True
+    return b and time.time() < b
+
+
+@app.before_request
+def block_banned_users():
+    """Banned users can view but not perform any state-changing action."""
+    if request.method == "POST" and request.path.startswith("/api/") and "user_id" in session:
+        if request.path == "/api/admin/ban":
+            return  # admin ban endpoint handles its own auth
+        try:
+            data = load_data()
+            u = data.get("users", {}).get(session["user_id"])
+            if u and is_banned(u):
+                until = u.get("banned_until", 0)
+                msg = "Your account is permanently banned." if until == -1 else "Your account is temporarily banned."
+                return jsonify({"error": msg}), 403
+        except Exception:
+            pass
+
+
 def fmt(amount):
     return f"${amount:,.2f}"
 
@@ -182,7 +207,8 @@ def admin_users():
         invested = round(u["shares"] * price, 2)
         net_worth = round(u["balance"] + invested, 2)
         users.append({"id": uid, "username": username or f"User #{uid[-4:]}", "shares": u["shares"],
-                      "cash": u["balance"], "net_worth": net_worth, "verified": u.get("verified", False)})
+                      "cash": u["balance"], "net_worth": net_worth, "verified": u.get("verified", False),
+                      "banned": is_banned(u)})
     users.sort(key=lambda x: x["net_worth"], reverse=True)
     return jsonify(users)
 
@@ -198,6 +224,27 @@ def admin_verify():
     u["verified"] = verified
     save_data(data)
     return jsonify({"ok": True, "verified": verified})
+
+
+@app.route("/api/admin/ban", methods=["POST"])
+def admin_ban():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    uid = str(request.json.get("user_id", ""))
+    minutes = request.json.get("minutes", 0)  # 0 = unban, -1 = permanent, >0 = temp
+    data = load_data()
+    u = get_user(data, uid)
+    if minutes == 0:
+        u["banned_until"] = 0
+        result = "unbanned"
+    elif minutes == -1:
+        u["banned_until"] = -1
+        result = "permanently banned"
+    else:
+        u["banned_until"] = int(time.time() + float(minutes) * 60)
+        result = f"banned for {minutes} min"
+    save_data(data)
+    return jsonify({"ok": True, "result": result})
 
 
 @app.route("/api/admin/set_price", methods=["POST"])
@@ -1492,6 +1539,10 @@ def api_company_gamble(cid):
         return jsonify({"error": "not a casino"}), 400
     data = load_data()
     u = get_user(data, session["user_id"])
+    now_g = int(time.time())
+    last_g = u.get("last_gamble", 0)
+    if now_g - last_g < 20:
+        return jsonify({"error": f"Slow down — wait {20 - (now_g - last_g)}s between bets"}), 429
     if u["balance"] < bet:
         return jsonify({"error": "not enough cash"}), 400
     win_profit = round(bet * (game["payout"] - 1), 2)  # net gain on a win
@@ -1507,6 +1558,7 @@ def api_company_gamble(cid):
         u["balance"] = round(u["balance"] - bet, 2)
         c["treasury"] = round(c["treasury"] + bet, 2)
         log_transaction(data, session["user_id"], "send", f"🎰 Lost {game['name']} at {c['ticker']}", -bet)
+    u["last_gamble"] = now_g
     save_data(data)
     save_companies(companies)
     return jsonify({"ok": True, "win": win, "bet": bet, "profit": win_profit,
@@ -3058,7 +3110,12 @@ async function loadAdmin() {
           <button class="btn btn-buy" style="font-size:12px;padding:5px 10px;background:#fee75c22;color:#fee75c;border-color:#fee75c40" onclick="adminGiveCash('${u.id}')">± Cash</button>
           <button class="btn ${u.verified ? 'btn-sell' : 'btn-buy'}" style="font-size:12px;padding:5px 10px" onclick="adminVerify('${u.id}', ${!u.verified})">${u.verified ? 'Unverify' : '✓ Verify'}</button>
           <button class="btn btn-sell" style="font-size:12px;padding:5px 10px" onclick="adminReset('${u.id}', '${u.username}')">Reset</button>
+          ${u.banned
+            ? `<button class="btn btn-buy" style="font-size:12px;padding:5px 10px" onclick="adminBan('${u.id}',0,'${u.username}')">Unban</button>`
+            : `<button class="btn btn-sell" style="font-size:12px;padding:5px 10px" onclick="adminBan('${u.id}',60,'${u.username}')">Ban 1h</button>
+               <button class="btn btn-sell" style="font-size:12px;padding:5px 10px;background:#ed424540" onclick="adminBan('${u.id}',-1,'${u.username}')">Ban Perm</button>`}
         </div>
+        ${u.banned ? '<div style="font-size:10px;color:var(--red);font-weight:700;margin-top:4px">🚫 BANNED</div>' : ''}
       </div>`;
   });
 
@@ -3101,6 +3158,13 @@ async function adminVerify(uid, verified) {
   const res = await fetch('/api/admin/verify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid, verified}) });
   const d = await res.json();
   if (d.ok) { showToast(verified ? 'User verified' : 'User unverified'); loadAdmin(); }
+}
+
+async function adminBan(uid, minutes, name) {
+  if (minutes === -1 && !confirm(`Permanently ban ${name}?`)) return;
+  const res = await fetch('/api/admin/ban', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid, minutes}) });
+  const d = await res.json();
+  if (d.ok) { showToast(`${name} ${d.result}`); loadAdmin(); }
 }
 </script>
 </body>

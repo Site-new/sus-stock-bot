@@ -80,21 +80,25 @@ def adjust_credit(u, delta):
     return u["credit"]
 
 def credit_tier(score):
-    if score >= 750:
-        return {"name": "Platinum", "emoji": "💎", "color": "#7ad7ff"}
-    if score >= 650:
-        return {"name": "Gold", "emoji": "🥇", "color": "#ffd700"}
-    if score >= 500:
-        return {"name": "Silver", "emoji": "🥈", "color": "#c0c0c0"}
-    return {"name": "Bronze", "emoji": "🥉", "color": "#cd7f32"}
+    if score >= 800:
+        return {"name": "Exceptional", "emoji": "💎", "color": "#7ad7ff"}
+    if score >= 740:
+        return {"name": "Very Good", "emoji": "🟢", "color": "#57f287"}
+    if score >= 670:
+        return {"name": "Good", "emoji": "🥇", "color": "#ffd700"}
+    if score >= 580:
+        return {"name": "Fair", "emoji": "🟡", "color": "#fee75c"}
+    return {"name": "Poor", "emoji": "🔴", "color": "#ed4245"}
 
 def send_limit(score):
     """Max single transfer by credit tier. None = unlimited."""
-    if score >= 750:
+    if score >= 800:
         return None
-    if score >= 650:
+    if score >= 740:
+        return 100000
+    if score >= 670:
         return 25000
-    if score >= 500:
+    if score >= 580:
         return 5000
     return 1000
 
@@ -3717,12 +3721,13 @@ GUIDE_HTML = """
   <p>Every account has a <b>credit score</b> from 300–850, starting at <b>500</b>. It controls how much money you're trusted to send.</p>
   <p><b>Score goes up:</b> repaying a loan in full <code>+25</code>.</p>
   <p><b>Score goes down:</b> defaulting on loan interest (can't afford a payment) <code>−20</code>.</p>
-  <p><b>Send limits by tier:</b></p>
+  <p><b>Send limits by tier (real FICO ranges):</b></p>
   <ul>
-    <li>🥉 <b>Bronze</b> (300–499): send up to <b>$1,000</b> at a time</li>
-    <li>🥈 <b>Silver</b> (500–649): up to <b>$5,000</b></li>
-    <li>🥇 <b>Gold</b> (650–749): up to <b>$25,000</b></li>
-    <li>💎 <b>Platinum</b> (750–850): <b>unlimited</b></li>
+    <li>🔴 <b>Poor</b> (300–579): send up to <b>$1,000</b> at a time</li>
+    <li>🟡 <b>Fair</b> (580–669): up to <b>$5,000</b></li>
+    <li>🥇 <b>Good</b> (670–739): up to <b>$25,000</b></li>
+    <li>🟢 <b>Very Good</b> (740–799): up to <b>$100,000</b></li>
+    <li>💎 <b>Exceptional</b> (800–850): <b>unlimited</b></li>
   </ul>
   <p class="muted">Your tier badge shows on the leaderboard and in your portfolio. Borrow and repay loans from a Lending Bank to build trust.</p>
 </div>

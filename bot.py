@@ -42,7 +42,7 @@ def is_market_open():
 
 def add_news_event(data, headline, positive, price_impact_pct, delay_public=True):
     """Append an event to the news feed stored in data.json.
-    delay_public=True means non-insider users see it 5 minutes later."""
+    delay_public=True means non-insider users see it 2 minutes later."""
     events = data.get("news_feed", [])
     now = int(time.time())
     events.append({
@@ -50,7 +50,7 @@ def add_news_event(data, headline, positive, price_impact_pct, delay_public=True
         "positive": positive,
         "impact": round(price_impact_pct, 2),
         "ts": now,
-        "public_at": now + 300 if delay_public else now,  # 5 min delay for public
+        "public_at": now + 120 if delay_public else now,  # 2 min delay for public
     })
     data["news_feed"] = events[-50:]  # keep last 50
 
@@ -946,7 +946,7 @@ async def fluctuate_price():
         price = data["stock_price"]
         target = data.get("price_target", random.uniform(MIN_PRICE, MAX_PRICE))
 
-        # Apply any pending earnings whose 5-min delay has elapsed
+        # Apply any pending earnings whose 2-min delay has elapsed
         now_ts = int(time.time())
         earnings_impact = 0.0
         still_pending = []
@@ -958,7 +958,7 @@ async def fluctuate_price():
                 still_pending.append(pe)
         data["pending_earnings"] = still_pending
 
-        # Apply a pending bull/bear cycle shift once its 5-min delay elapses
+        # Apply a pending bull/bear cycle shift once its 2-min delay elapses
         pbb = data.get("pending_bull_bear")
         if pbb and now_ts >= pbb.get("apply_at", 0):
             data["bull_bear"] = pbb["cycle"]
@@ -975,14 +975,14 @@ async def fluctuate_price():
         sentiment = data.get("sentiment", 50)
         volatility = 0.018 + (abs(sentiment - 50) / 50) * 0.03  # ~1.8%-4.8%
 
-        # Flash crash: 0.8% chance per tick — queued with 5-min insider warning
+        # Flash crash: 0.8% chance per tick — queued with 2-min insider warning
         has_pending_crash = any(pe.get("crash") for pe in data.get("pending_earnings", []))
         if random.random() < 0.008 and not has_pending_crash:
             crash_pct = round(random.uniform(-45, -30), 2)
             add_news_event(data, "⚡ FLASH CRASH: Sus Corp set to plummet!", False, crash_pct, delay_public=True)
             data.setdefault("pending_earnings", []).append(
-                {"impact_pct": crash_pct, "apply_at": int(time.time()) + 300, "crash": True})
-            print(f"[flash_crash] queued {crash_pct}% in 5min")
+                {"impact_pct": crash_pct, "apply_at": int(time.time()) + 120, "crash": True})
+            print(f"[flash_crash] queued {crash_pct}% in 2min")
         change_pct = random.uniform(-volatility, volatility) + bias
 
         # Fold in any earnings/crash impact that just went public
@@ -1080,7 +1080,7 @@ async def before_fluctuate():
 
 @tasks.loop(minutes=20)
 async def earnings_report():
-    """Queue an earnings report. The price impact is delayed 5 minutes so
+    """Queue an earnings report. The price impact is delayed 2 minutes so
     Insider Trading Ring members can act on the headline before it hits."""
     if not is_market_open():
         return
@@ -1090,15 +1090,15 @@ async def earnings_report():
     headline = get_headline(positive)
     now = int(time.time())
 
-    # Add news with 5-min public delay; insiders see it immediately
+    # Add news with 2-min public delay; insiders see it immediately
     add_news_event(data, f"📰 EARNINGS: {headline}", positive, impact_pct, delay_public=True)
-    # Queue the price impact to apply when the news goes public (5 min later)
+    # Queue the price impact to apply when the news goes public (2 min later)
     pending = data.get("pending_earnings", [])
-    pending.append({"impact_pct": impact_pct, "apply_at": now + 300})
+    pending.append({"impact_pct": impact_pct, "apply_at": now + 120})
     data["pending_earnings"] = pending
 
     save_data(data)
-    print(f"[earnings] queued {'📈' if positive else '📉'} {impact_pct:.1f}% (applies in 5min) — {headline}")
+    print(f"[earnings] queued {'📈' if positive else '📉'} {impact_pct:.1f}% (applies in 2min) — {headline}")
 
 
 @earnings_report.before_loop
@@ -1108,7 +1108,7 @@ async def before_earnings():
 
 @tasks.loop(minutes=30)
 async def update_bull_bear():
-    """Queue a market cycle shift; takes effect 5 min later (insider warning)."""
+    """Queue a market cycle shift; takes effect 2 min later (insider warning)."""
     data = load_data()
     expires = data.get("bull_bear_expires", 0)
     if time.time() < expires:
@@ -1122,12 +1122,12 @@ async def update_bull_bear():
         "cycle": cycle,
         "duration_hours": duration_hours,
         "sentiment": random.randint(65, 90) if cycle == "bull" else (random.randint(10, 35) if cycle == "bear" else random.randint(40, 60)),
-        "apply_at": int(time.time()) + 300,
+        "apply_at": int(time.time()) + 120,
     }
     label = "🐂 Bull Market" if cycle == "bull" else ("🐻 Bear Market" if cycle == "bear" else "😐 Neutral Market")
     add_news_event(data, f"📊 Market Cycle Shift incoming: {label} for next {duration_hours}h", cycle == "bull", 0, delay_public=True)
     save_data(data)
-    print(f"[bull_bear] queued {cycle} (applies in 5min)")
+    print(f"[bull_bear] queued {cycle} (applies in 2min)")
 
 
 @update_bull_bear.before_loop
@@ -1186,7 +1186,7 @@ COMPANY_DOCS = {
     "insider_ring": ("🔍 Insider Trading Ring",
         "Sell early access to market news as a paid subscription.\n\n"
         "• The CEO sets an **hourly subscription price**.\n"
-        "• Subscribers see every market event **5 minutes before the public**, with a live countdown — time to trade before the price moves.\n"
+        "• Subscribers see every market event **2 minutes before the public**, with a live countdown — time to trade before the price moves.\n"
         "• Subscribers are billed hourly into the treasury. The CEO gets news free and can **grant free access**.\n\n"
         "_The most powerful info edge in the game, and steady income for the owner._"),
     "short_cartel": ("🐻 Short Selling Cartel",

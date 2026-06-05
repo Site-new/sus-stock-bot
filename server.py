@@ -288,9 +288,9 @@ def admin_fire_news():
     now = int(time.time())
     events = data.get("news_feed", [])
     events.append({"headline": f"📰 {headline}", "positive": positive, "impact": impact,
-                   "ts": now, "public_at": now + 300})
+                   "ts": now, "public_at": now + 120})
     data["news_feed"] = events[-50:]
-    data.setdefault("pending_earnings", []).append({"impact_pct": impact, "apply_at": now + 300})
+    data.setdefault("pending_earnings", []).append({"impact_pct": impact, "apply_at": now + 120})
     save_data(data)
     return jsonify({"ok": True, "headline": headline, "impact": impact})
 
@@ -3836,10 +3836,10 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
             <button class="btn btn-discord" onclick="dSetSubPrice('${cid}')">Set Price</button>
           </div>`;
       } else if (subbed) {
-        inner += `<div style="font-size:13px;color:var(--green);margin-bottom:6px">✓ Subscribed — you get news ${'5 min'} early (${fmt(price)}/hr)</div>
+        inner += `<div style="font-size:13px;color:var(--green);margin-bottom:6px">✓ Subscribed — you get news ${'2 min'} early (${fmt(price)}/hr)</div>
           <button class="btn btn-sell" style="width:100%" onclick="dUnsubscribe('${cid}')">Cancel Subscription</button>`;
       } else {
-        inner += `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Subscribe for ${fmt(price)}/hour to get all market news 5 minutes before everyone else.</div>
+        inner += `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Subscribe for ${fmt(price)}/hour to get all market news 2 minutes before everyone else.</div>
           <button class="btn btn-discord" style="width:100%" onclick="dSubscribe('${cid}')">Subscribe — ${fmt(price)}/hr</button>`;
       }
       return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">${inner}</div>`;
@@ -4356,7 +4356,7 @@ function buildTypePanel(c, isMember, isCeo) {
       <div style="font-size:11px;color:var(--muted);margin-top:4px">The mafia appreciates your cooperation.</div></div>`;
     case 'insider_ring': return `
       <div><div class="card-title">🔍 Insider Feed</div>
-      ${isMember ? `<div style="font-size:13px;color:var(--green)">You receive news 5 minutes early. Check the market news panel.</div>` : '<div style="color:var(--muted);font-size:13px">Join to access early news.</div>'}</div>`;
+      ${isMember ? `<div style="font-size:13px;color:var(--green)">You receive news 2 minutes early. Check the market news panel.</div>` : '<div style="color:var(--muted);font-size:13px">Join to access early news.</div>'}</div>`;
     default: return '';
   }
 }
@@ -4629,7 +4629,7 @@ GUIDE_HTML = """
   <p>Sell early access to market news as a paid subscription.</p>
   <ul>
     <li>The CEO sets an <b>hourly subscription price</b>.</li>
-    <li>Subscribers see every market event (earnings, flash crashes, cycle shifts) <b>5 minutes before the public</b>, with a live countdown — time to trade before the price moves.</li>
+    <li>Subscribers see every market event (earnings, flash crashes, cycle shifts) <b>2 minutes before the public</b>, with a live countdown — time to trade before the price moves.</li>
     <li>Subscribers are billed hourly into the treasury. The CEO gets the news free and can <b>grant free access</b> to anyone.</li>
   </ul>
   <p class="muted">The most powerful information edge in the game, and a steady earner for the owner.</p>

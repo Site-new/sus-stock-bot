@@ -30,6 +30,10 @@ public class SusStock extends JavaPlugin implements Listener {
     private volatile boolean netherUnlocked = false;
     private volatile boolean endUnlocked = false;
     private NamespacedKey storeKey;
+    private final java.util.Set<String> insiderUuids = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Set<Long> shownInsider = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Set<Long> shownPublic = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private boolean newsFirstRun = true;
 
     @Override
     public void onEnable() {
@@ -46,7 +50,85 @@ public class SusStock extends JavaPlugin implements Listener {
         Bukkit.getScheduler().runTaskTimer(this, this::pollUnlocks, 20L, 1200L);
         // Strip store-only items obtained outside the store, every 3s
         Bukkit.getScheduler().runTaskTimer(this, this::stripIllegalItems, 60L, 60L);
+        // Poll insider list (60s) and market news (20s)
+        Bukkit.getScheduler().runTaskTimer(this, this::pollInsiders, 40L, 1200L);
+        Bukkit.getScheduler().runTaskTimer(this, this::pollNews, 100L, 400L);
         getLogger().info("SusStock enabled. API: " + apiBase);
+    }
+
+    private void pollInsiders() {
+        runAsync(() -> {
+            String resp = get("/api/mc/insiders?key=" + enc(apiKey));
+            if (resp == null) return;
+            insiderUuids.clear();
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"([0-9a-fA-F\\-]{36})\"").matcher(resp);
+            while (m.find()) insiderUuids.add(m.group(1));
+        });
+    }
+
+    private void pollNews() {
+        runAsync(() -> {
+            String resp = get("/api/mc/news?key=" + enc(apiKey));
+            if (resp == null || !resp.trim().startsWith("[")) return;
+            java.util.List<long[]> meta = new java.util.ArrayList<>();
+            java.util.List<String> headlines = new java.util.ArrayList<>();
+            java.util.List<Boolean> positives = new java.util.ArrayList<>();
+            // Split objects
+            java.util.regex.Matcher obj = java.util.regex.Pattern.compile("\\{[^}]*\\}").matcher(resp);
+            long now = System.currentTimeMillis() / 1000L;
+            while (obj.find()) {
+                String o = obj.group();
+                long ts = lnum(o, "ts");
+                long pub = lnum(o, "public_at");
+                String headline = sval(o, "headline");
+                boolean pos = o.contains("\"positive\": true") || o.contains("\"positive\":true");
+                meta.add(new long[]{ts, pub});
+                headlines.add(headline);
+                positives.add(pos);
+            }
+            // On first run, mark everything already-seen so we don't spam old news
+            if (newsFirstRun) {
+                for (long[] mm : meta) { shownInsider.add(mm[0]); shownPublic.add(mm[0]); }
+                newsFirstRun = false;
+                return;
+            }
+            final java.util.List<long[]> fMeta = meta;
+            final java.util.List<String> fHead = headlines;
+            final java.util.List<Boolean> fPos = positives;
+            Bukkit.getScheduler().runTask(this, () -> {
+                long t = System.currentTimeMillis() / 1000L;
+                for (int i = 0; i < fMeta.size(); i++) {
+                    long ts = fMeta.get(i)[0], pub = fMeta.get(i)[1];
+                    String color = fPos.get(i) ? "§a" : "§c";
+                    String head = fHead.get(i);
+                    if (!shownInsider.contains(ts)) {
+                        shownInsider.add(ts);
+                        // Insiders see it immediately (early if not yet public)
+                        boolean early = pub > t;
+                        for (Player p : Bukkit.getOnlinePlayers())
+                            if (insiderUuids.contains(p.getUniqueId().toString()))
+                                p.sendMessage((early ? "§d[Insider] " : "§6[Market] ") + color + head);
+                    }
+                    if (pub <= t && !shownPublic.contains(ts)) {
+                        shownPublic.add(ts);
+                        for (Player p : Bukkit.getOnlinePlayers())
+                            if (!insiderUuids.contains(p.getUniqueId().toString()))
+                                p.sendMessage("§6[Market] " + color + head);
+                    }
+                }
+                if (shownInsider.size() > 200) shownInsider.clear();
+                if (shownPublic.size() > 200) shownPublic.clear();
+            });
+        });
+    }
+
+    private long lnum(String json, String key) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*(\\d+)").matcher(json);
+        return m.find() ? Long.parseLong(m.group(1)) : 0;
+    }
+    private String sval(String json, String key) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(json);
+        return m.find() ? m.group(1).replace("\\\"", "\"").replace("\\\\", "\\") : "";
     }
 
     // Items that can ONLY be obtained from the website store

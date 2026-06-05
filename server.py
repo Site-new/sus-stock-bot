@@ -1871,6 +1871,32 @@ def api_mc_unlocks():
     return jsonify({k: u[k]["unlocked"] for k in DEFAULT_UNLOCKS})
 
 
+@app.route("/api/mc/news")
+def api_mc_news():
+    """Recent market news for the plugin to broadcast (with public_at for insider timing)."""
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    data = load_data()
+    feed = data.get("news_feed", [])[-15:]
+    out = [{"ts": n.get("ts", 0), "public_at": n.get("public_at", n.get("ts", 0)),
+            "headline": n.get("headline", ""), "positive": n.get("positive", True),
+            "kind": n.get("kind", "")} for n in feed]
+    return jsonify(out)
+
+
+@app.route("/api/mc/insiders")
+def api_mc_insiders():
+    """UUIDs of linked players who currently have insider-ring access."""
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    data = load_data()
+    uuids = []
+    for uuid, link in data.get("mc_links", {}).items():
+        if user_in_insider_ring(link.get("discord_id")):
+            uuids.append(uuid)
+    return jsonify({"uuids": uuids})
+
+
 @app.route("/api/mc/status")
 def mc_status():
     if not _mc_auth():

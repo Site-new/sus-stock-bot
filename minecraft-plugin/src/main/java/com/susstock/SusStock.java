@@ -73,9 +73,9 @@ public class SusStock extends JavaPlugin implements Listener {
             java.util.List<long[]> meta = new java.util.ArrayList<>();
             java.util.List<String> headlines = new java.util.ArrayList<>();
             java.util.List<Boolean> positives = new java.util.ArrayList<>();
+            java.util.List<String> impacts = new java.util.ArrayList<>();
             // Split objects
             java.util.regex.Matcher obj = java.util.regex.Pattern.compile("\\{[^}]*\\}").matcher(resp);
-            long now = System.currentTimeMillis() / 1000L;
             while (obj.find()) {
                 String o = obj.group();
                 long ts = lnum(o, "ts");
@@ -85,6 +85,7 @@ public class SusStock extends JavaPlugin implements Listener {
                 meta.add(new long[]{ts, pub});
                 headlines.add(headline);
                 positives.add(pos);
+                impacts.add(num(o, "impact"));
             }
             // On first run, mark everything already-seen so we don't spam old news
             if (newsFirstRun) {
@@ -95,12 +96,14 @@ public class SusStock extends JavaPlugin implements Listener {
             final java.util.List<long[]> fMeta = meta;
             final java.util.List<String> fHead = headlines;
             final java.util.List<Boolean> fPos = positives;
+            final java.util.List<String> fImp = impacts;
             Bukkit.getScheduler().runTask(this, () -> {
                 long t = System.currentTimeMillis() / 1000L;
                 for (int i = 0; i < fMeta.size(); i++) {
                     long ts = fMeta.get(i)[0], pub = fMeta.get(i)[1];
                     String color = fPos.get(i) ? "§a" : "§c";
-                    String head = fHead.get(i);
+                    String imp = impactStr(fImp.get(i));
+                    String head = fHead.get(i) + imp;
                     if (!shownInsider.contains(ts)) {
                         shownInsider.add(ts);
                         // Insiders see it immediately (early if not yet public)
@@ -125,6 +128,17 @@ public class SusStock extends JavaPlugin implements Listener {
     private long lnum(String json, String key) {
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*(\\d+)").matcher(json);
         return m.find() ? Long.parseLong(m.group(1)) : 0;
+    }
+    private String num(String json, String key) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)").matcher(json);
+        return m.find() ? m.group(1) : "0";
+    }
+    private String impactStr(String raw) {
+        try {
+            double v = Double.parseDouble(raw);
+            if (Math.abs(v) < 0.01) return "";
+            return " §7(" + (v > 0 ? "§a+" : "§c") + String.format("%.1f", v) + "%§7)";
+        } catch (Exception e) { return ""; }
     }
     private String sval(String json, String key) {
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"" + key + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(json);

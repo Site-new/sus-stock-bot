@@ -1903,7 +1903,7 @@ def api_mc_news():
         return " ".join("".join(c for c in s if ord(c) < 128).split())
     out = [{"ts": n.get("ts", 0), "public_at": n.get("public_at", n.get("ts", 0)),
             "headline": clean(n.get("headline", "")), "positive": n.get("positive", True),
-            "kind": n.get("kind", "")} for n in feed]
+            "impact": n.get("impact", 0), "kind": n.get("kind", "")} for n in feed]
     return jsonify(out)
 
 

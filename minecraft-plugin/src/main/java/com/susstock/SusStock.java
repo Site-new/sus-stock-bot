@@ -277,6 +277,11 @@ public class SusStock extends JavaPlugin implements Listener {
         String[] parts = token.split(":");
         Enchantment ench = parts.length >= 1 ? Enchantment.getByKey(NamespacedKey.minecraft(parts[0])) : null;
         if (ench == null) { p.sendMessage("§cUnknown enchant."); return; }
+        // Only allow enchants that legitimately fit this item (no Fortune on a sword, etc.)
+        if (!ench.canEnchantItem(held)) {
+            p.sendMessage("§c" + prettyEnchant(token) + " can't go on a " + held.getType().name().toLowerCase().replace("_", " ") + ".");
+            return;
+        }
         int level;
         try { level = Integer.parseInt(parts[1]); } catch (Exception ex) { level = 1; }
         final int flevel = level;

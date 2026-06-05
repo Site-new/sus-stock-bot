@@ -1594,7 +1594,7 @@ def api_store_timeout():
     if not charge(data, session["user_id"], 4000):
         return jsonify({"error": "Need $4,000"}), 400
     import datetime as _dt
-    until = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=5)).isoformat()
+    until = (_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(minutes=10)).isoformat()
     try:
         r = requests.patch(f"{DISCORD_API}/guilds/{gid}/members/{target}", headers=_dh(),
                            json={"communication_disabled_until": until}, timeout=8)
@@ -1603,7 +1603,7 @@ def api_store_timeout():
     except Exception:
         return jsonify({"error": "Discord error"}), 500
     tname = get_discord_username(target) or "user"
-    log_transaction(data, session["user_id"], "send", f"Timed out {tname} (5m)", -4000)
+    log_transaction(data, session["user_id"], "send", f"Timed out {tname} (10m)", -4000)
     save_data(data)
     return jsonify({"ok": True})
 
@@ -2012,7 +2012,7 @@ DASHBOARD_HTML = """
     </div>
 
     <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
-      <div style="font-weight:700;margin-bottom:6px">🔇 Timeout Someone (5 min) — $4,000</div>
+      <div style="font-weight:700;margin-bottom:6px">🔇 Timeout Someone (10 min) — $4,000</div>
       <div style="display:flex;gap:6px">
         <select id="st-timeout-target" class="trade-input" style="flex:1;margin-bottom:0"><option value="">Select user...</option></select>
         <button class="btn btn-sell" onclick="buyTimeout()">Buy</button>
@@ -2121,7 +2121,7 @@ async function storeBuy(url, body, msg) {
 }
 function buyRole() { const name=document.getElementById('st-role-name').value.trim(); const color=document.getElementById('st-role-color').value; if(!name){showToast('Enter a role name',false);return;} storeBuy('/api/store/role',{name,color},'Role created & assigned!'); }
 function buyNick() { const nick=document.getElementById('st-nick').value.trim(); if(!nick){showToast('Enter a nickname',false);return;} storeBuy('/api/store/nickname',{nick},'Nickname changed!'); }
-function buyTimeout() { const t=document.getElementById('st-timeout-target').value; if(!t){showToast('Pick a user',false);return;} storeBuy('/api/store/timeout',{target_id:t},'User timed out 5 min'); }
+function buyTimeout() { const t=document.getElementById('st-timeout-target').value; if(!t){showToast('Pick a user',false);return;} storeBuy('/api/store/timeout',{target_id:t},'User timed out 10 min'); }
 function buyPin() { const channel_id=document.getElementById('st-pin-channel').value; const message=document.getElementById('st-pin-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/pin',{channel_id,message},'Message pinned!'); }
 function buyAnnounce() { const channel_id=document.getElementById('st-ann-channel').value; const message=document.getElementById('st-ann-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/announce',{channel_id,message},'Announcement posted!'); }
 function buyNews(positive) { const headline=document.getElementById('st-news').value.trim(); if(!headline){showToast('Enter a headline',false);return;} storeBuy('/api/store/news',{headline,positive},'Posted to market news!'); }

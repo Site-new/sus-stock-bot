@@ -2071,7 +2071,7 @@ DASHBOARD_HTML = """
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
-  <button onclick="openLinkMC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🟩 Link MC</button>
+  <button id="linkmc-btn" onclick="openLinkMC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🟩 Link MC</button>
   <a href="/guide" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px;text-decoration:none">📖 Guide</a>
   <button onclick="openStore()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🛒 Store</button>
   <button onclick="toggleHistory()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">📜 History</button>
@@ -2566,6 +2566,18 @@ async function fetchMe() {
   // Portfolio
   const pnlColor = u.pnl >= 0 ? 'var(--green)' : 'var(--red)';
   isLoggedIn = true;
+  const mcBtn = document.getElementById('linkmc-btn');
+  if (mcBtn) {
+    if (u.mc_linked) {
+      mcBtn.textContent = '🟩 ' + u.mc_linked;
+      mcBtn.style.borderColor = 'var(--green)';
+      mcBtn.style.color = 'var(--green)';
+    } else {
+      mcBtn.textContent = '🟩 Link MC';
+      mcBtn.style.borderColor = 'var(--border)';
+      mcBtn.style.color = 'var(--text)';
+    }
+  }
   if (u.username === 'slasher_asher') {
     document.getElementById('admin-toggle').style.display = 'block';
     loadAdmin();

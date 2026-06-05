@@ -303,7 +303,6 @@ async def on_ready():
     fluctuate_price.start()
     update_price_target.start()
     earnings_report.start()
-    pay_dividends.start()
     update_bull_bear.start()
     insider_tip.start()
     process_companies.start()
@@ -1025,29 +1024,6 @@ async def earnings_report():
 
 @earnings_report.before_loop
 async def before_earnings():
-    await bot.wait_until_ready()
-
-
-@tasks.loop(minutes=20)
-async def pay_dividends():
-    """Pay $0.50 per share to all shareholders."""
-    data = load_data()
-    total_paid = 0
-    recipients = 0
-    for uid, u in data["users"].items():
-        if u["shares"] > 0:
-            payout = round(u["shares"] * 0.50, 2)
-            u["balance"] = round(u["balance"] + payout, 2)
-            total_paid += payout
-            recipients += 1
-    if recipients > 0:
-        add_news_event(data, f"💵 Dividend payout: $0.50/share paid to {recipients} shareholders (${total_paid:.2f} total)", True, 0)
-        save_data(data)
-        print(f"[dividends] Paid ${total_paid:.2f} to {recipients} users")
-
-
-@pay_dividends.before_loop
-async def before_dividends():
     await bot.wait_until_ready()
 
 

@@ -99,10 +99,12 @@ public class SusStock extends JavaPlugin implements Listener {
             final java.util.List<String> fImp = impacts;
             Bukkit.getScheduler().runTask(this, () -> {
                 long t = System.currentTimeMillis() / 1000L;
+                java.text.SimpleDateFormat tf = new java.text.SimpleDateFormat("h:mm a");
                 for (int i = 0; i < fMeta.size(); i++) {
                     long ts = fMeta.get(i)[0], pub = fMeta.get(i)[1];
                     String color = fPos.get(i) ? "§a" : "§c";
                     String imp = impactStr(fImp.get(i));
+                    String time = "§8[" + tf.format(new java.util.Date(ts * 1000L)) + "] ";
                     String head = fHead.get(i) + imp;
                     if (!shownInsider.contains(ts)) {
                         shownInsider.add(ts);
@@ -110,13 +112,13 @@ public class SusStock extends JavaPlugin implements Listener {
                         boolean early = pub > t;
                         for (Player p : Bukkit.getOnlinePlayers())
                             if (insiderUuids.contains(p.getUniqueId().toString()))
-                                p.sendMessage((early ? "§d[Insider] " : "§6[Market] ") + color + head);
+                                p.sendMessage(time + (early ? "§d[Insider] " : "§6[Market] ") + color + head);
                     }
                     if (pub <= t && !shownPublic.contains(ts)) {
                         shownPublic.add(ts);
                         for (Player p : Bukkit.getOnlinePlayers())
                             if (!insiderUuids.contains(p.getUniqueId().toString()))
-                                p.sendMessage("§6[Market] " + color + head);
+                                p.sendMessage(time + "§6[Market] " + color + head);
                     }
                 }
                 if (shownInsider.size() > 200) shownInsider.clear();

@@ -873,6 +873,15 @@ async def fluctuate_price():
                 still_pending.append(pe)
         data["pending_earnings"] = still_pending
 
+        # Apply a pending bull/bear cycle shift once its 5-min delay elapses
+        pbb = data.get("pending_bull_bear")
+        if pbb and now_ts >= pbb.get("apply_at", 0):
+            data["bull_bear"] = pbb["cycle"]
+            data["bull_bear_expires"] = time.time() + pbb["duration_hours"] * 3600
+            data["sentiment"] = pbb["sentiment"]
+            data["pending_bull_bear"] = None
+            print(f"[bull_bear] applied {pbb['cycle']}")
+
         # Bull/Bear cycle bias
         cycle = data.get("bull_bear", "neutral")
         bias = 0.025 if cycle == "bull" else (-0.025 if cycle == "bear" else 0)
@@ -881,19 +890,17 @@ async def fluctuate_price():
         sentiment = data.get("sentiment", 50)
         volatility = 0.03 + (abs(sentiment - 50) / 50) * 0.05  # 3%-8%
 
-        # Flash crash: 0.8% chance per tick
-        flash_crash = False
-        if random.random() < 0.008:
-            flash_crash = True
-            crash_pct = random.uniform(-0.45, -0.30)
-            change_pct = crash_pct
-            headline = "⚡ FLASH CRASH: Sus Corp Plummets in Seconds!"
-            add_news_event(data, headline, False, crash_pct * 100)
-            print(f"[flash_crash] {crash_pct:.1%}")
-        else:
-            change_pct = random.uniform(-volatility, volatility) + bias
+        # Flash crash: 0.8% chance per tick — queued with 5-min insider warning
+        has_pending_crash = any(pe.get("crash") for pe in data.get("pending_earnings", []))
+        if random.random() < 0.008 and not has_pending_crash:
+            crash_pct = round(random.uniform(-45, -30), 2)
+            add_news_event(data, "⚡ FLASH CRASH: Sus Corp set to plummet!", False, crash_pct, delay_public=True)
+            data.setdefault("pending_earnings", []).append(
+                {"impact_pct": crash_pct, "apply_at": int(time.time()) + 300, "crash": True})
+            print(f"[flash_crash] queued {crash_pct}% in 5min")
+        change_pct = random.uniform(-volatility, volatility) + bias
 
-        # Fold in any earnings impact that just went public
+        # Fold in any earnings/crash impact that just went public
         change_pct += earnings_impact
 
         reversion = (target - price) * 0.04
@@ -1039,21 +1046,26 @@ async def before_dividends():
 
 @tasks.loop(minutes=30)
 async def update_bull_bear():
-    """Randomly shift the market into bull, bear, or neutral cycle."""
+    """Queue a market cycle shift; takes effect 5 min later (insider warning)."""
     data = load_data()
     expires = data.get("bull_bear_expires", 0)
     if time.time() < expires:
         return
+    # Don't queue a second one if one is already pending
+    if data.get("pending_bull_bear"):
+        return
     cycle = random.choices(["bull", "bear", "neutral"], weights=[35, 35, 30])[0]
     duration_hours = random.randint(8, 36)
-    data["bull_bear"] = cycle
-    data["bull_bear_expires"] = time.time() + duration_hours * 3600
-    # Adjust sentiment
-    data["sentiment"] = random.randint(65, 90) if cycle == "bull" else (random.randint(10, 35) if cycle == "bear" else random.randint(40, 60))
+    data["pending_bull_bear"] = {
+        "cycle": cycle,
+        "duration_hours": duration_hours,
+        "sentiment": random.randint(65, 90) if cycle == "bull" else (random.randint(10, 35) if cycle == "bear" else random.randint(40, 60)),
+        "apply_at": int(time.time()) + 300,
+    }
     label = "🐂 Bull Market" if cycle == "bull" else ("🐻 Bear Market" if cycle == "bear" else "😐 Neutral Market")
-    add_news_event(data, f"📊 Market Cycle Shift: {label} expected for next {duration_hours}h", cycle == "bull", 0)
+    add_news_event(data, f"📊 Market Cycle Shift incoming: {label} for next {duration_hours}h", cycle == "bull", 0, delay_public=True)
     save_data(data)
-    print(f"[bull_bear] {cycle} for {duration_hours}h")
+    print(f"[bull_bear] queued {cycle} (applies in 5min)")
 
 
 @update_bull_bear.before_loop

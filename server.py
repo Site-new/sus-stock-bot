@@ -569,6 +569,18 @@ def api_history():
     return jsonify(list(reversed(hist)))
 
 
+@app.route("/api/all_users")
+def api_all_users():
+    """List all known users by display name (for pickers)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    data = load_data()
+    out = [{"id": uid, "username": get_discord_username(uid) or f"User #{uid[-4:]}"}
+           for uid in data["users"]]
+    out.sort(key=lambda x: x["username"].lower())
+    return jsonify(out)
+
+
 @app.route("/api/verified_users")
 def api_verified_users():
     """List verified users (for the send-money recipient picker). Verified only."""
@@ -2276,7 +2288,7 @@ async function openDrawerCompany(cid) {
     <div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🎁 Grant Free Access</div>
       <div style="display:flex;gap:6px">
-        <input type="text" id="d-free-input" class="trade-input" placeholder="User ID for free service" style="flex:1;margin-bottom:0"/>
+        <select id="d-free-input" class="trade-input" style="flex:1;margin-bottom:0"><option value="">Select a user...</option></select>
         <button class="btn btn-discord" onclick="dGrantFree('${cid}')">Grant</button>
       </div>
     </div>
@@ -2313,6 +2325,18 @@ async function openDrawerCompany(cid) {
 
   detailOpen = true;
   document.getElementById('company-detail-panel').style.right = '0';
+  populateFreeSelect();
+}
+
+let allUsersCache = null;
+async function populateFreeSelect() {
+  const sel = document.getElementById('d-free-input');
+  if (!sel) return;
+  if (!allUsersCache) {
+    allUsersCache = await fetch('/api/all_users').then(r => r.ok ? r.json() : []).catch(() => []);
+  }
+  sel.innerHTML = '<option value="">Select a user...</option>' +
+    allUsersCache.map(u => `<option value="${u.id}">${u.username}</option>`).join('');
 }
 
 function buildDrawerTypePanel(c, isMember, isCeo) {

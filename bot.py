@@ -715,6 +715,8 @@ async def process_companies():
                 sub_price = c.get("sub_price", 0)
                 now_t = int(time.time())
                 for uid, sub in list(c.get("subscribers", {}).items()):
+                    if sub.get("free"):
+                        continue  # comped members never billed
                     if now_t < sub.get("next_due", 0):
                         continue
                     u = data.get("users", {}).get(uid)

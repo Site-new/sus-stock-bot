@@ -920,6 +920,61 @@ def api_company_distribute(cid):
     return jsonify({"ok": True, "treasury": c["treasury"]})
 
 
+@app.route("/api/companies/<cid>/post_news", methods=["POST"])
+def api_company_post_news(cid):
+    """CEO posts a public announcement to the market news feed (once per hour)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    now = int(time.time())
+    last = c.get("last_news_post", 0)
+    if now - last < 3600:
+        remain = (3600 - (now - last)) // 60 + 1
+        return jsonify({"error": f"You can post again in {remain} min"}), 429
+    headline = request.json.get("headline", "").strip()[:140]
+    if not headline:
+        return jsonify({"error": "empty headline"}), 400
+    positive = bool(request.json.get("positive", True))
+    c["last_news_post"] = now
+    save_companies(companies)
+    data = load_data()
+    events = data.get("news_feed", [])
+    events.append({
+        "headline": f"📢 {c['name']} ({c['ticker']}): {headline}",
+        "positive": positive, "impact": 0, "ts": now, "public_at": now,
+        "kind": "announcement",
+    })
+    data["news_feed"] = events[-50:]
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/grant_free", methods=["POST"])
+def api_company_grant_free(cid):
+    """CEO grants a user free access to the company's service (e.g. insider ring)."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]):
+        return jsonify({"error": "CEO only"}), 403
+    target = str(request.json.get("user_id", "")).strip()
+    if not target:
+        return jsonify({"error": "enter a user ID"}), 400
+    now = int(time.time())
+    if c["type"] == "insider_ring":
+        c.setdefault("subscribers", {})[target] = {"since": now, "next_due": now + 10**12, "free": True}
+    else:
+        c.setdefault("free_access", [])
+        if target not in c["free_access"]:
+            c["free_access"].append(target)
+    save_companies(companies)
+    return jsonify({"ok": True})
+
+
 @app.route("/api/companies/<cid>/set_description", methods=["POST"])
 def api_company_set_description(cid):
     if "user_id" not in session:
@@ -1739,7 +1794,7 @@ async function fetchStock() {
         const isEarly = d.is_insider && publicAt > nowSec;
         const earlyBadge = isEarly ? ` <span style="font-size:9px;font-weight:700;background:#5865f2;color:#fff;padding:1px 5px;border-radius:999px">EARLY</span> <span class="event-countdown" data-public="${publicAt}" style="font-size:10px;font-weight:700;color:#5865f2">⏳ --:--</span>` : '';
         return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start;${isEarly?'background:#5865f211;border-radius:6px;padding:8px':''}">
-          <span style="font-size:18px;flex-shrink:0">${n.positive ? '📈' : '📉'}</span>
+          <span style="font-size:18px;flex-shrink:0">${n.kind === 'announcement' ? '📢' : (n.positive ? '📈' : '📉')}</span>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;line-height:1.4">${n.headline}${impact}${earlyBadge}</div>
             <div style="font-size:10px;color:var(--muted);margin-top:2px">${t}</div>
@@ -2211,6 +2266,21 @@ async function openDrawerCompany(cid) {
       </div>
     </div>
     <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">📢 Post Announcement (1/hour, public)</div>
+      <input type="text" id="d-news-input" class="trade-input" placeholder="Headline everyone will see..." maxlength="140"/>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-buy" style="flex:1" onclick="dPostNews('${cid}', true)">📈 Good News</button>
+        <button class="btn btn-sell" style="flex:1" onclick="dPostNews('${cid}', false)">📉 Bad News</button>
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🎁 Grant Free Access</div>
+      <div style="display:flex;gap:6px">
+        <input type="text" id="d-free-input" class="trade-input" placeholder="User ID for free service" style="flex:1;margin-bottom:0"/>
+        <button class="btn btn-discord" onclick="dGrantFree('${cid}')">Grant</button>
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">CEO — Trade SUS (holds ${c.sus_shares||0} shares)</div>
       <div style="display:flex;gap:6px">
         <input type="number" id="d-sus-shares" class="trade-input" placeholder="SUS shares" style="flex:1;margin-bottom:0"/>
@@ -2362,6 +2432,8 @@ async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscr
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
 async function dDistribute(cid) { const a=parseFloat(document.getElementById('d-dist-amt')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/distribute`,{amount:a},'Profits distributed!',cid); }
+async function dPostNews(cid, positive) { const h=document.getElementById('d-news-input')?.value.trim(); if(!h){showToast('Enter a headline',false);return;} await dAction(`/api/companies/${cid}/post_news`,{headline:h,positive},'Announcement posted!',cid); }
+async function dGrantFree(cid) { const t=document.getElementById('d-free-input')?.value.trim(); if(!t){showToast('Enter a user ID',false);return;} await dAction(`/api/companies/${cid}/grant_free`,{user_id:t},'Free access granted!',cid); }
 
 // Create company
 function showCreateDrawer() {

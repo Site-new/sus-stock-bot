@@ -306,6 +306,7 @@ async def on_ready():
     update_bull_bear.start()
     insider_tip.start()
     process_companies.start()
+    manage_lottery.start()
 
 
 @bot.event
@@ -693,6 +694,59 @@ async def update_price_target():
 
 @update_price_target.before_loop
 async def before_target():
+    await bot.wait_until_ready()
+
+
+LOTTERY_INTERVAL = 2 * 3600   # a round opens every 2 hours
+LOTTERY_WINDOW = 600          # tickets open for 10 minutes
+
+
+@tasks.loop(seconds=30)
+async def manage_lottery():
+    try:
+        data = load_data()
+        lot = data.get("lottery") or {"open": False, "ends_at": 0, "next_open": 0, "pot": 0, "tickets": {}}
+        now = int(time.time())
+
+        if lot.get("open"):
+            if now >= lot.get("ends_at", 0):
+                # Draw a winner weighted by ticket count
+                tickets = lot.get("tickets", {})
+                pool = []
+                for uid, cnt in tickets.items():
+                    pool.extend([uid] * int(cnt))
+                pot = round(lot.get("pot", 0), 2)
+                if pool and pot > 0:
+                    winner = random.choice(pool)
+                    wu = data["users"].get(winner)
+                    if wu:
+                        wu["balance"] = round(wu["balance"] + pot, 2)
+                    name = "A player"
+                    try:
+                        m = await bot.fetch_user(int(winner))
+                        name = m.display_name
+                    except Exception:
+                        pass
+                    add_news_event(data, f"🎟️ LOTTERY: {name} won {format_price(pot)} with {tickets.get(winner,0)} tickets!", True, 0, delay_public=False)
+                    data.setdefault("notifications", {}).setdefault(winner, []).append(
+                        {"headline": f"🎟️ You WON the lottery — {format_price(pot)}!", "positive": True,
+                         "impact": 0, "ts": now, "kind": "personal"})
+                else:
+                    add_news_event(data, "🎟️ LOTTERY: No tickets sold — no winner this round.", False, 0, delay_public=False)
+                lot = {"open": False, "ends_at": 0, "next_open": now + LOTTERY_INTERVAL, "pot": 0, "tickets": {}}
+        else:
+            if now >= lot.get("next_open", 0):
+                lot = {"open": True, "ends_at": now + LOTTERY_WINDOW, "next_open": 0, "pot": 0, "tickets": {}}
+                add_news_event(data, "🎟️ LOTTERY OPEN for 10 minutes! Buy tickets on the website.", True, 0, delay_public=False)
+
+        data["lottery"] = lot
+        save_data(data)
+    except Exception as e:
+        print(f"[lottery] error: {e}")
+
+
+@manage_lottery.before_loop
+async def before_lottery():
     await bot.wait_until_ready()
 
 

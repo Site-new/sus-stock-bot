@@ -251,6 +251,7 @@ def admin_reset_market():
     data["notifications"] = {}
     data["history"] = {}
     data["unlocks"] = {}
+    data["lottery"] = {"open": False, "ends_at": 0, "next_open": 0, "pot": 0, "tickets": {}}
 
     # Delete every store-created Discord role
     gid = get_guild_id()
@@ -1969,6 +1970,49 @@ def api_unlocks_contribute():
     return jsonify({"ok": True, "pooled": st["pooled"], "unlocked": st["unlocked"], "newly": newly})
 
 
+LOTTERY_TICKET_PRICE = 500
+
+
+@app.route("/api/lottery")
+def api_lottery():
+    data = load_data()
+    lot = data.get("lottery") or {"open": False, "ends_at": 0, "next_open": 0, "pot": 0, "tickets": {}}
+    uid = session.get("user_id")
+    return jsonify({
+        "open": lot.get("open", False),
+        "ends_at": lot.get("ends_at", 0),
+        "next_open": lot.get("next_open", 0),
+        "pot": round(lot.get("pot", 0), 2),
+        "ticket_price": LOTTERY_TICKET_PRICE,
+        "my_tickets": lot.get("tickets", {}).get(uid, 0) if uid else 0,
+        "total_tickets": sum(lot.get("tickets", {}).values()),
+    })
+
+
+@app.route("/api/lottery/buy", methods=["POST"])
+def api_lottery_buy():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    count = int(request.json.get("count", 1))
+    if count < 1:
+        return jsonify({"error": "invalid count"}), 400
+    data = load_data()
+    lot = data.get("lottery") or {}
+    if not lot.get("open") or time.time() >= lot.get("ends_at", 0):
+        return jsonify({"error": "lottery is closed right now"}), 400
+    cost = count * LOTTERY_TICKET_PRICE
+    u = get_user(data, session["user_id"])
+    if u["balance"] < cost:
+        return jsonify({"error": f"Need {fmt(cost)} for {count} ticket(s)"}), 400
+    u["balance"] = round(u["balance"] - cost, 2)
+    lot["pot"] = round(lot.get("pot", 0) + cost, 2)
+    lot.setdefault("tickets", {})[session["user_id"]] = lot["tickets"].get(session["user_id"], 0) + count
+    log_transaction(data, session["user_id"], "send", f"🎟️ Bought {count} lottery ticket(s)", -cost)
+    data["lottery"] = lot
+    save_data(data)
+    return jsonify({"ok": True, "pot": lot["pot"], "my_tickets": lot["tickets"][session["user_id"]]})
+
+
 @app.route("/api/mc/unlocks")
 def api_mc_unlocks():
     if not _mc_auth():
@@ -2382,6 +2426,7 @@ DASHBOARD_HTML = """
   <a href="/guide" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px;text-decoration:none">📖 Guide</a>
   <button onclick="openStore()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🛒 Store</button>
   <button onclick="openUnlocks()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🔓 Server Unlocks</button>
+  <button onclick="openLottery()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🎟️ Lottery</button>
   <button onclick="toggleHistory()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">📜 History</button>
   <button onclick="toggleCompanies()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🏢 Companies</button>
   <div class="auth-area" id="auth-area">
@@ -2575,6 +2620,17 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Lottery modal -->
+<div id="lottery-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:26px;width:420px;max-width:95vw;text-align:center">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <span style="font-size:17px;font-weight:700">🎟️ Lottery</span>
+      <button onclick="closeLottery()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div id="lottery-body">Loading...</div>
+  </div>
+</div>
+
 <!-- Server Unlocks modal -->
 <div id="unlocks-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto">
@@ -2644,6 +2700,64 @@ function updateMarketTimer() {
 }
 updateMarketTimer();
 setInterval(updateMarketTimer, 1000);
+
+// ── Lottery ──────────────────────────────────────────────────────────────────────
+let lotteryTimer = null;
+async function openLottery() {
+  document.getElementById('lottery-modal').style.display = 'flex';
+  await loadLottery();
+  if (lotteryTimer) clearInterval(lotteryTimer);
+  lotteryTimer = setInterval(updateLotteryCountdown, 1000);
+}
+function closeLottery() {
+  document.getElementById('lottery-modal').style.display = 'none';
+  if (lotteryTimer) { clearInterval(lotteryTimer); lotteryTimer = null; }
+}
+let lotteryState = null;
+async function loadLottery() {
+  lotteryState = await fetch('/api/lottery').then(r => r.ok ? r.json() : null).catch(() => null);
+  renderLottery();
+}
+function renderLottery() {
+  const el = document.getElementById('lottery-body');
+  const d = lotteryState;
+  if (!d) { el.innerHTML = 'Unavailable.'; return; }
+  if (d.open) {
+    el.innerHTML = `
+      <div style="font-size:13px;color:var(--green);font-weight:700;margin-bottom:4px">🟢 OPEN — closes in <span id="lot-countdown">--:--</span></div>
+      <div style="font-size:32px;font-weight:800;margin:8px 0">${fmt(d.pot)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">current prize pool · ${d.total_tickets} tickets sold</div>
+      <div style="font-size:12px;margin-bottom:12px">You have <b>${d.my_tickets}</b> ticket(s) · ${fmt(d.ticket_price)} each</div>
+      <div style="display:flex;gap:6px;justify-content:center">
+        <input type="number" id="lot-count" class="trade-input" placeholder="# tickets" min="1" value="1" style="max-width:120px;margin-bottom:0"/>
+        <button class="btn btn-discord" onclick="buyTickets()">Buy Tickets</button>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px">Winner is drawn randomly — more tickets = better odds.</div>`;
+  } else {
+    el.innerHTML = `
+      <div style="font-size:13px;color:var(--red);font-weight:700;margin-bottom:8px">🔴 CLOSED</div>
+      <div style="font-size:13px;color:var(--muted)">Next lottery opens in <span id="lot-countdown">--:--</span></div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">Rounds open every 2 hours and run for 10 minutes.</div>`;
+  }
+}
+function updateLotteryCountdown() {
+  const el = document.getElementById('lot-countdown');
+  if (!el || !lotteryState) return;
+  const now = Date.now() / 1000;
+  let target = lotteryState.open ? lotteryState.ends_at : lotteryState.next_open;
+  let remain = Math.max(0, Math.round(target - now));
+  if (remain <= 0) { loadLottery(); return; }
+  const h = Math.floor(remain/3600), m = Math.floor((remain%3600)/60), s = remain%60;
+  el.textContent = (h>0?h+':':'') + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+async function buyTickets() {
+  const count = parseInt(document.getElementById('lot-count')?.value) || 1;
+  const res = await fetch('/api/lottery/buy', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({count})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Bought ${count} ticket(s)!`);
+  loadLottery(); fetchMe();
+}
 
 // ── Server Unlocks ───────────────────────────────────────────────────────────────
 async function openUnlocks() {

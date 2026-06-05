@@ -1872,6 +1872,58 @@ def mc_uuid_for(data, discord_id):
     return None
 
 
+# Enchantments players can buy (applied to the item they're holding). Keys are vanilla.
+ENCHANTS = {
+    "sharpness":       {"name": "⚔️ Sharpness V",       "key": "sharpness",       "level": 5, "cost": 8000},
+    "protection":      {"name": "🛡️ Protection IV",     "key": "protection",      "level": 4, "cost": 8000},
+    "efficiency":      {"name": "⛏️ Efficiency V",       "key": "efficiency",      "level": 5, "cost": 6000},
+    "unbreaking":      {"name": "🔧 Unbreaking III",     "key": "unbreaking",      "level": 3, "cost": 5000},
+    "mending":         {"name": "💚 Mending",            "key": "mending",         "level": 1, "cost": 15000},
+    "fortune":         {"name": "💎 Fortune III",        "key": "fortune",         "level": 3, "cost": 10000},
+    "looting":         {"name": "🍖 Looting III",        "key": "looting",         "level": 3, "cost": 8000},
+    "power":           {"name": "🏹 Power V",            "key": "power",           "level": 5, "cost": 7000},
+    "feather_falling": {"name": "🪶 Feather Falling IV", "key": "feather_falling", "level": 4, "cost": 5000},
+}
+
+
+@app.route("/api/store/enchants")
+def api_store_enchants():
+    return jsonify([{"key": k, "name": v["name"], "cost": v["cost"]} for k, v in ENCHANTS.items()])
+
+
+@app.route("/api/store/buy_enchant", methods=["POST"])
+def api_store_buy_enchant():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    e = ENCHANTS.get(request.json.get("enchant", ""))
+    if not e:
+        return jsonify({"error": "unknown enchant"}), 400
+    data = load_data()
+    uuid = mc_uuid_for(data, session["user_id"])
+    if not uuid:
+        return jsonify({"error": "Link your Minecraft account first"}), 400
+    if not charge(data, session["user_id"], e["cost"]):
+        return jsonify({"error": f"Need {fmt(e['cost'])}"}), 400
+    data.setdefault("mc_pending_ench", {}).setdefault(uuid, []).append(f"{e['key']}:{e['level']}")
+    log_transaction(data, session["user_id"], "send", f"✨ Bought {e['name']}", -e["cost"])
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/mc/pending_ench")
+def api_mc_pending_ench():
+    """Plugin claims pending enchantments to apply to the player's held item."""
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    uuid = request.args.get("uuid", "")
+    data = load_data()
+    ench = data.get("mc_pending_ench", {}).get(uuid, [])
+    if ench:
+        data["mc_pending_ench"][uuid] = []
+        save_data(data)
+    return jsonify({"enchants": ench})
+
+
 @app.route("/api/store/mc_items")
 def api_store_mc_items():
     return jsonify([{"key": k, "name": v["name"], "cost": v["cost"]} for k, v in MC_STORE.items()])
@@ -2657,6 +2709,12 @@ DASHBOARD_HTML = """
       <div id="store-cart" style="margin-top:10px"></div>
     </div>
 
+    <div id="store-enchant-section" style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px;display:none">
+      <div style="font-weight:700;margin-bottom:4px">✨ Enchant Held Item</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Buy an enchant, then in Minecraft <b>hold the item</b> and run <code style="background:var(--bg);padding:1px 5px;border-radius:4px">/susenchant</code>.</div>
+      <div id="store-enchants" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
+    </div>
+
     <div style="background:var(--surface2);border-radius:10px;padding:14px">
       <div style="font-weight:700;margin-bottom:6px">📰 Market News Post — $5,000</div>
       <input id="st-news" class="trade-input" placeholder="Headline for the market news feed" maxlength="140"/>
@@ -2887,11 +2945,26 @@ async function openStore() {
     mcItemsCache = await fetch('/api/store/mc_items').then(r => r.ok ? r.json() : []).catch(() => []);
     mcItemsEl.innerHTML = mcItemsCache.map(it => `<button class="btn btn-buy" style="flex-direction:column;padding:8px;font-size:12px" onclick="addToCart('${it.key}')">${it.name}<span style="font-size:10px;color:var(--muted)">${fmt(it.cost)}</span></button>`).join('');
     renderCart();
+    // Enchants
+    document.getElementById('store-enchant-section').style.display = 'block';
+    const ench = await fetch('/api/store/enchants').then(r => r.ok ? r.json() : []).catch(() => []);
+    document.getElementById('store-enchants').innerHTML = ench.map(e => `<button class="btn btn-discord" style="flex-direction:column;padding:8px;font-size:12px" onclick="buyEnchant('${e.key}')">${e.name}<span style="font-size:10px;color:#cdd">${fmt(e.cost)}</span></button>`).join('');
   } else {
     mcStatus.innerHTML = '<span style="color:var(--red)">Link your Minecraft account (🟩 Link MC) to buy in-game items.</span>';
     mcItemsEl.innerHTML = '';
     document.getElementById('store-cart').innerHTML = '';
+    document.getElementById('store-enchant-section').style.display = 'none';
   }
+}
+
+async function buyEnchant(enchant) {
+  const res = await fetch('/api/store/buy_enchant', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enchant})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast('Bought! Hold the item in Minecraft and run /susenchant');
+  fetchMe();
+  const me = await fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null);
+  if (me) document.getElementById('store-balance').textContent = 'Your cash: ' + fmt(me.cash);
 }
 
 let cart = {};

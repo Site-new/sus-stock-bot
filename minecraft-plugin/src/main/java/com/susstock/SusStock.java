@@ -5,10 +5,13 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.enchantment.EnchantItemEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
+import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.inventory.ItemStack;
@@ -194,6 +197,28 @@ public class SusStock extends JavaPlugin implements Listener {
         }
     }
 
+    @EventHandler
+    public void onEnchant(EnchantItemEvent e) {
+        // Enchanting table disabled — enchants are bought on the website
+        e.setCancelled(true);
+        e.getEnchanter().sendMessage("§cEnchanting tables are disabled. Buy enchants on the Sus Stock website (/susenchant).");
+    }
+
+    @EventHandler
+    public void onAnvil(PrepareAnvilEvent e) {
+        ItemStack result = e.getResult();
+        if (result == null) return;
+        ItemStack first = e.getInventory().getItem(0);
+        java.util.Map<Enchantment, Integer> before = (first != null) ? first.getEnchantments() : new java.util.HashMap<>();
+        // If the result gains any enchantment or level beyond the first input, block it
+        for (java.util.Map.Entry<Enchantment, Integer> en : result.getEnchantments().entrySet()) {
+            if (en.getValue() > before.getOrDefault(en.getKey(), 0)) {
+                e.setResult(null);
+                return;
+            }
+        }
+    }
+
     private void pollUnlocks() {
         runAsync(() -> {
             String resp = get("/api/mc/unlocks?key=" + enc(apiKey));
@@ -296,6 +321,37 @@ public class SusStock extends JavaPlugin implements Listener {
                 } else {
                     p.sendMessage("§cNot linked yet. Run /suslink <code> with a code from the website.");
                 }
+            });
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("susenchant")) {
+            if (!(sender instanceof Player)) { sender.sendMessage("Players only."); return true; }
+            Player p = (Player) sender;
+            ItemStack held = p.getInventory().getItemInMainHand();
+            if (held == null || held.getType() == Material.AIR) {
+                p.sendMessage("§cHold the item you want enchanted, then run /susenchant.");
+                return true;
+            }
+            runAsync(() -> {
+                String resp = get("/api/mc/pending_ench?uuid=" + p.getUniqueId() + "&key=" + enc(apiKey));
+                if (resp == null || !resp.contains("\"enchants\"")) { p.sendMessage("§7No enchants to apply."); return; }
+                java.util.List<String> list = parseCommands(resp);
+                if (list.isEmpty()) { p.sendMessage("§7No enchants purchased. Buy one on the website first."); return; }
+                Bukkit.getScheduler().runTask(this, () -> {
+                    int applied = 0;
+                    for (String tok : list) {
+                        String[] parts = tok.split(":");
+                        if (parts.length < 2) continue;
+                        Enchantment ench = Enchantment.getByKey(NamespacedKey.minecraft(parts[0]));
+                        if (ench == null) continue;
+                        try {
+                            held.addUnsafeEnchantment(ench, Integer.parseInt(parts[1]));
+                            applied++;
+                        } catch (Exception ignored) {}
+                    }
+                    p.sendMessage("§a✨ Applied " + applied + " enchant(s) to your held item!");
+                });
             });
             return true;
         }

@@ -11,6 +11,9 @@ commands:
   susbalance:
     description: Check your Sus Stock cash balance
     usage: /susbalance
+  susenchant:
+    description: Apply enchants you bought on the website to your held item
+    usage: /susenchant
   susreward:
     description: (admin) give a player SUS cash
     usage: /susreward <player> <amount>

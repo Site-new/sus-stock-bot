@@ -273,6 +273,26 @@ def admin_reset_market():
     return jsonify({"ok": True, "roles_deleted": deleted})
 
 
+@app.route("/api/admin/fire_news", methods=["POST"])
+def admin_fire_news():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    import random as _r
+    from headlines import get_headline
+    positive = _r.random() > 0.45
+    impact = round((_r.uniform(8, 25) if positive else _r.uniform(-22, -8)), 2)
+    headline = get_headline(positive)
+    data = load_data()
+    now = int(time.time())
+    events = data.get("news_feed", [])
+    events.append({"headline": f"📰 {headline}", "positive": positive, "impact": impact,
+                   "ts": now, "public_at": now + 300})
+    data["news_feed"] = events[-50:]
+    data.setdefault("pending_earnings", []).append({"impact_pct": impact, "apply_at": now + 300})
+    save_data(data)
+    return jsonify({"ok": True, "headline": headline, "impact": impact})
+
+
 @app.route("/api/admin/ban", methods=["POST"])
 def admin_ban():
     if not is_admin():
@@ -3557,6 +3577,11 @@ async function loadAdmin() {
         </div>
       </div>
 
+      <div style="margin-bottom:14px">
+        <div class="stat-label" style="margin-bottom:6px">Market News</div>
+        <button class="btn btn-buy" onclick="adminFireNews()">📰 Fire Random News</button>
+      </div>
+
       <div style="margin-bottom:14px;border:1px solid #ed424540;border-radius:8px;padding:10px">
         <div class="stat-label" style="margin-bottom:6px;color:#ed4245">⚠️ Danger Zone</div>
         <button class="btn btn-sell" style="width:100%;background:#ed424540" onclick="adminResetMarket()">🔄 Reset Entire Market</button>
@@ -3633,6 +3658,13 @@ async function adminBan(uid, minutes, name) {
   const res = await fetch('/api/admin/ban', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid, minutes}) });
   const d = await res.json();
   if (d.ok) { showToast(`${name} ${d.result}`); loadAdmin(); }
+}
+
+async function adminFireNews() {
+  const res = await fetch('/api/admin/fire_news', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+  const d = await res.json();
+  if (d.ok) { showToast(`📰 ${d.impact > 0 ? '+' : ''}${d.impact}% — ${d.headline}`); fetchStock(); }
+  else { showToast(d.error || 'Failed', false); }
 }
 
 async function adminResetMarket() {

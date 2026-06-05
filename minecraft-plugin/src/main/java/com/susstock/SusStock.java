@@ -4,6 +4,9 @@ import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.OutputStream;
@@ -13,7 +16,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 
-public class SusStock extends JavaPlugin {
+public class SusStock extends JavaPlugin implements Listener {
 
     private String apiBase;
     private String apiKey;
@@ -23,7 +26,48 @@ public class SusStock extends JavaPlugin {
         saveDefaultConfig();
         apiBase = getConfig().getString("api_base", "https://sus-stock-bot-production.up.railway.app");
         apiKey = getConfig().getString("api_key", "");
+        getServer().getPluginManager().registerEvents(this, this);
         getLogger().info("SusStock enabled. API: " + apiBase);
+    }
+
+    @EventHandler
+    public void onJoin(PlayerJoinEvent e) {
+        // Deliver any pending in-game purchases shortly after join
+        Bukkit.getScheduler().runTaskLater(this, () -> claimRewards(e.getPlayer(), false), 40L);
+    }
+
+    private void claimRewards(Player p, boolean announce) {
+        runAsync(() -> {
+            String resp = get("/api/mc/pending?uuid=" + p.getUniqueId() + "&key=" + enc(apiKey));
+            if (resp == null || !resp.contains("\"commands\"")) {
+                if (announce) p.sendMessage("§7No pending Sus Stock items.");
+                return;
+            }
+            java.util.List<String> cmds = parseCommands(resp);
+            if (cmds.isEmpty()) {
+                if (announce) p.sendMessage("§7No pending Sus Stock items.");
+                return;
+            }
+            // Run console commands on the main thread
+            Bukkit.getScheduler().runTask(this, () -> {
+                for (String c : cmds) {
+                    String cmd = c.replace("%player%", p.getName());
+                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
+                }
+                p.sendMessage("§a🎁 Delivered " + cmds.size() + " Sus Stock item(s)!");
+            });
+        });
+    }
+
+    private java.util.List<String> parseCommands(String json) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        int i = json.indexOf("[");
+        int j = json.indexOf("]", i);
+        if (i < 0 || j < 0) return out;
+        String inner = json.substring(i + 1, j);
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"((?:[^\"\\\\]|\\\\.)*)\"").matcher(inner);
+        while (m.find()) out.add(m.group(1).replace("\\\"", "\"").replace("\\\\", "\\"));
+        return out;
     }
 
     @Override
@@ -57,6 +101,12 @@ public class SusStock extends JavaPlugin {
                     p.sendMessage("§cNot linked yet. Run /suslink <code> with a code from the website.");
                 }
             });
+            return true;
+        }
+
+        if (cmd.getName().equalsIgnoreCase("susclaim")) {
+            if (!(sender instanceof Player)) { sender.sendMessage("Players only."); return true; }
+            claimRewards((Player) sender, true);
             return true;
         }
 

@@ -1700,6 +1700,65 @@ def mc_add():
     return jsonify({"ok": True, "balance": u["balance"]})
 
 
+# In-game store items → console commands the plugin runs (%player% is replaced)
+MC_STORE = {
+    "diamonds":  {"name": "💎 32 Diamonds",          "cost": 3000,  "cmds": ["give %player% diamond 32"]},
+    "gapples":   {"name": "🍎 16 Golden Apples",      "cost": 4000,  "cmds": ["give %player% golden_apple 16"]},
+    "netherite": {"name": "🪓 Netherite Gear Kit",    "cost": 20000, "cmds": ["give %player% netherite_sword 1", "give %player% netherite_pickaxe 1", "give %player% netherite_chestplate 1", "give %player% netherite_leggings 1", "give %player% netherite_boots 1", "give %player% netherite_helmet 1"]},
+    "xp":        {"name": "✨ 30 XP Levels",          "cost": 2500,  "cmds": ["xp add %player% 30 levels"]},
+    "strength":  {"name": "💪 Strength II (30 min)",  "cost": 5000,  "cmds": ["effect give %player% strength 1800 1"]},
+    "elytra":    {"name": "🪽 Elytra",                "cost": 25000, "cmds": ["give %player% elytra 1"]},
+    "shulker":   {"name": "📦 Shulker Box",           "cost": 6000,  "cmds": ["give %player% shulker_box 1"]},
+    "totem":     {"name": "🪬 Totem of Undying",      "cost": 8000,  "cmds": ["give %player% totem_of_undying 1"]},
+}
+
+def mc_uuid_for(data, discord_id):
+    for uuid, link in data.get("mc_links", {}).items():
+        if link.get("discord_id") == discord_id:
+            return uuid
+    return None
+
+
+@app.route("/api/store/mc_items")
+def api_store_mc_items():
+    return jsonify([{"key": k, "name": v["name"], "cost": v["cost"]} for k, v in MC_STORE.items()])
+
+
+@app.route("/api/store/mc_buy", methods=["POST"])
+def api_store_mc_buy():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    item = MC_STORE.get(request.json.get("item", ""))
+    if not item:
+        return jsonify({"error": "unknown item"}), 400
+    data = load_data()
+    uuid = mc_uuid_for(data, session["user_id"])
+    if not uuid:
+        return jsonify({"error": "Link your Minecraft account first"}), 400
+    if not charge(data, session["user_id"], item["cost"]):
+        return jsonify({"error": f"Need {fmt(item['cost'])}"}), 400
+    pending = data.setdefault("mc_pending", {}).setdefault(uuid, [])
+    for c in item["cmds"]:
+        pending.append(c)
+    log_transaction(data, session["user_id"], "send", f"⛏️ Bought {item['name']}", -item["cost"])
+    save_data(data)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/mc/pending")
+def api_mc_pending():
+    """Plugin claims a linked player's pending in-game rewards (and clears them)."""
+    if not _mc_auth():
+        return jsonify({"error": "bad api key"}), 403
+    uuid = request.args.get("uuid", "")
+    data = load_data()
+    cmds = data.get("mc_pending", {}).get(uuid, [])
+    if cmds:
+        data["mc_pending"][uuid] = []
+        save_data(data)
+    return jsonify({"commands": cmds})
+
+
 @app.route("/api/mc/status")
 def mc_status():
     if not _mc_auth():
@@ -2250,6 +2309,12 @@ DASHBOARD_HTML = """
     <div id="store-balance" style="font-size:12px;color:var(--muted);margin-bottom:14px">Your cash: —</div>
 
     <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="font-weight:700;margin-bottom:4px">🎮 In-Game Items <span style="font-size:11px;color:var(--muted);font-weight:400">(delivered in Minecraft)</span></div>
+      <div id="store-mc-status" style="font-size:11px;color:var(--muted);margin-bottom:8px"></div>
+      <div id="store-mc-items" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
+    </div>
+
+    <div style="background:var(--surface2);border-radius:10px;padding:14px;margin-bottom:12px">
       <div style="font-weight:700;margin-bottom:6px">🎨 Custom Colored Role — $4,000</div>
       <div style="display:flex;gap:6px;align-items:center">
         <input id="st-role-name" class="trade-input" placeholder="Role name" maxlength="30" style="flex:1;margin-bottom:0"/>
@@ -2394,6 +2459,17 @@ async function openStore() {
   // Fill balance
   const me = await fetch('/api/me').then(r => r.ok ? r.json() : null).catch(() => null);
   if (me) document.getElementById('store-balance').textContent = 'Your cash: ' + fmt(me.cash);
+  // In-game items
+  const mcStatus = document.getElementById('store-mc-status');
+  const mcItemsEl = document.getElementById('store-mc-items');
+  if (me && me.mc_linked) {
+    mcStatus.textContent = 'Linked as ' + me.mc_linked + ' — items appear in-game (rejoin or /susclaim).';
+    const items = await fetch('/api/store/mc_items').then(r => r.ok ? r.json() : []).catch(() => []);
+    mcItemsEl.innerHTML = items.map(it => `<button class="btn btn-buy" style="flex-direction:column;padding:8px;font-size:12px" onclick="buyMcItem('${it.key}')">${it.name}<span style="font-size:10px;color:var(--muted)">${fmt(it.cost)}</span></button>`).join('');
+  } else {
+    mcStatus.innerHTML = '<span style="color:var(--red)">Link your Minecraft account (🟩 Link MC) to buy in-game items.</span>';
+    mcItemsEl.innerHTML = '';
+  }
   // Fill user dropdown
   if (!allUsersCache) allUsersCache = await fetch('/api/all_users').then(r => r.ok ? r.json() : []).catch(() => []);
   const tsel = document.getElementById('st-timeout-target');
@@ -2420,6 +2496,7 @@ function buyTimeout() { const t=document.getElementById('st-timeout-target').val
 function buyPin() { const channel_id=document.getElementById('st-pin-channel').value; const message=document.getElementById('st-pin-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/pin',{channel_id,message},'Message pinned!'); }
 function buyAnnounce() { const channel_id=document.getElementById('st-ann-channel').value; const message=document.getElementById('st-ann-msg').value.trim(); if(!channel_id||!message){showToast('Pick channel & message',false);return;} storeBuy('/api/store/announce',{channel_id,message},'Announcement posted!'); }
 function buyNews(positive) { const headline=document.getElementById('st-news').value.trim(); if(!headline){showToast('Enter a headline',false);return;} storeBuy('/api/store/news',{headline,positive},'Posted to market news!'); }
+function buyMcItem(item) { storeBuy('/api/store/mc_buy',{item},'Bought! Claim it in Minecraft (rejoin or /susclaim).'); }
 
 // Live countdown on insider EARLY news items
 function updateEventCountdowns() {

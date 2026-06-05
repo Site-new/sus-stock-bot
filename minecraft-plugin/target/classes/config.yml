@@ -1,0 +1,4 @@
+# Sus Stock plugin config
+api_base: "https://sus-stock-bot-production.up.railway.app"
+# Must match the MC_API_KEY environment variable on the Railway server
+api_key: "CHANGE_ME"

@@ -90,15 +90,21 @@ def save_chat_meta(meta):
         json.dump(meta, f)
 
 def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {"users": {}, "stock_price": BASE_PRICE, "price_history": [BASE_PRICE], "timestamps": []}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+    for f_path in [DATA_FILE, DATA_FILE + ".tmp"]:
+        if os.path.exists(f_path):
+            try:
+                with open(f_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                continue
+    return {"users": {}, "stock_price": BASE_PRICE, "price_history": [BASE_PRICE], "timestamps": []}
 
 
 def save_data(data):
-    with open(DATA_FILE, "w") as f:
+    tmp = DATA_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp, DATA_FILE)
 
 
 def get_user(data, user_id):

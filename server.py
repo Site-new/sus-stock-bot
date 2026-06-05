@@ -46,15 +46,21 @@ def get_discord_username(user_id):
 
 
 def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {"users": {}, "stock_price": 50.0, "price_history": [50.0]}
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+    for f_path in [DATA_FILE, DATA_FILE + ".tmp"]:
+        if os.path.exists(f_path):
+            try:
+                with open(f_path, "r") as f:
+                    return json.load(f)
+            except Exception:
+                continue
+    return {"users": {}, "stock_price": 50.0, "price_history": [50.0]}
 
 
 def save_data(data):
-    with open(DATA_FILE, "w") as f:
+    tmp = DATA_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp, DATA_FILE)
 
 
 def get_user(data, user_id):
@@ -431,8 +437,10 @@ def load_chat():
         return json.load(f)
 
 def save_chat(messages):
-    with open(CHAT_FILE, "w") as f:
-        json.dump(messages[-200:], f)  # keep last 200 messages
+    tmp = CHAT_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(messages[-200:], f)
+    os.replace(tmp, CHAT_FILE)
 
 
 @app.route("/api/chat")

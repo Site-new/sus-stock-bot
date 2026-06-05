@@ -33,8 +33,10 @@ def load_companies():
 
 
 def save_companies(companies):
-    with open(COMPANY_FILE, "w") as f:
+    tmp = COMPANY_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(companies, f, indent=2)
+    os.replace(tmp, COMPANY_FILE)
 
 
 def company_value(company, sus_price):

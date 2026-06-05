@@ -2000,6 +2000,9 @@ def api_lottery_buy():
     lot = data.get("lottery") or {}
     if not lot.get("open") or time.time() >= lot.get("ends_at", 0):
         return jsonify({"error": "lottery is closed right now"}), 400
+    owned = lot.get("tickets", {}).get(session["user_id"], 0)
+    if owned + count > 3:
+        return jsonify({"error": f"Max 3 tickets per round (you have {owned})"}), 400
     cost = count * LOTTERY_TICKET_PRICE
     u = get_user(data, session["user_id"])
     if u["balance"] < cost:
@@ -2727,12 +2730,13 @@ function renderLottery() {
       <div style="font-size:13px;color:var(--green);font-weight:700;margin-bottom:4px">🟢 OPEN — closes in <span id="lot-countdown">--:--</span></div>
       <div style="font-size:32px;font-weight:800;margin:8px 0">${fmt(d.pot)}</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:4px">current prize pool · ${d.total_tickets} tickets sold</div>
-      <div style="font-size:12px;margin-bottom:12px">You have <b>${d.my_tickets}</b> ticket(s) · ${fmt(d.ticket_price)} each</div>
-      <div style="display:flex;gap:6px;justify-content:center">
-        <input type="number" id="lot-count" class="trade-input" placeholder="# tickets" min="1" value="1" style="max-width:120px;margin-bottom:0"/>
+      <div style="font-size:12px;margin-bottom:12px">You have <b>${d.my_tickets}</b>/3 ticket(s) · ${fmt(d.ticket_price)} each</div>
+      ${d.my_tickets >= 3 ? '<div style="font-size:12px;color:var(--green);font-weight:700">✅ Max tickets bought — good luck!</div>'
+        : `<div style="display:flex;gap:6px;justify-content:center">
+        <input type="number" id="lot-count" class="trade-input" placeholder="# tickets" min="1" max="${3 - d.my_tickets}" value="1" style="max-width:120px;margin-bottom:0"/>
         <button class="btn btn-discord" onclick="buyTickets()">Buy Tickets</button>
-      </div>
-      <div style="font-size:10px;color:var(--muted);margin-top:8px">Winner is drawn randomly — more tickets = better odds.</div>`;
+      </div>`}
+      <div style="font-size:10px;color:var(--muted);margin-top:8px">Max 3 tickets each. Winner drawn randomly — more tickets = better odds.</div>`;
   } else {
     el.innerHTML = `
       <div style="font-size:13px;color:var(--red);font-weight:700;margin-bottom:8px">🔴 CLOSED</div>

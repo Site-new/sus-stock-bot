@@ -1898,8 +1898,11 @@ def api_mc_news():
         return jsonify({"error": "bad api key"}), 403
     data = load_data()
     feed = data.get("news_feed", [])[-15:]
+    def clean(s):
+        # Minecraft chat can't render emojis — strip non-ASCII and tidy spaces
+        return " ".join("".join(c for c in s if ord(c) < 128).split())
     out = [{"ts": n.get("ts", 0), "public_at": n.get("public_at", n.get("ts", 0)),
-            "headline": n.get("headline", ""), "positive": n.get("positive", True),
+            "headline": clean(n.get("headline", "")), "positive": n.get("positive", True),
             "kind": n.get("kind", "")} for n in feed]
     return jsonify(out)
 

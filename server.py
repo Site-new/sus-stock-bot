@@ -153,9 +153,22 @@ def admin_users():
         invested = round(u["shares"] * price, 2)
         net_worth = round(u["balance"] + invested, 2)
         users.append({"id": uid, "username": username or f"User #{uid[-4:]}", "shares": u["shares"],
-                      "cash": u["balance"], "net_worth": net_worth})
+                      "cash": u["balance"], "net_worth": net_worth, "verified": u.get("verified", False)})
     users.sort(key=lambda x: x["net_worth"], reverse=True)
     return jsonify(users)
+
+
+@app.route("/api/admin/verify", methods=["POST"])
+def admin_verify():
+    if not is_admin():
+        return jsonify({"error": "forbidden"}), 403
+    uid = str(request.json.get("user_id", ""))
+    verified = bool(request.json.get("verified", True))
+    data = load_data()
+    u = get_user(data, uid)
+    u["verified"] = verified
+    save_data(data)
+    return jsonify({"ok": True, "verified": verified})
 
 
 @app.route("/api/admin/set_price", methods=["POST"])
@@ -288,6 +301,8 @@ def api_me():
         "short": short,
         "short_pnl": short_pnl,
         "limit_orders": limit_orders,
+        "verified": u.get("verified", False),
+        "is_admin": is_admin(),
     })
 
 
@@ -306,6 +321,7 @@ def api_buy():
         return jsonify({"error": f"Not enough cash. Need {fmt(cost)}, have {fmt(u['balance'])}"}), 400
     u["balance"] = round(u["balance"] - cost, 2)
     u["shares"] += shares
+    log_transaction(data, session["user_id"], "buy", f"Bought {shares} SUS @ {fmt(price)}", -cost)
     save_data(data)
     return jsonify({"ok": True, "bought": shares, "cost": cost, "balance": u["balance"], "shares": u["shares"]})
 
@@ -325,6 +341,7 @@ def api_sell():
     earnings = round(price * shares, 2)
     u["shares"] -= shares
     u["balance"] = round(u["balance"] + earnings, 2)
+    log_transaction(data, session["user_id"], "sell", f"Sold {shares} SUS @ {fmt(price)}", earnings)
     save_data(data)
     return jsonify({"ok": True, "sold": shares, "earnings": earnings, "balance": u["balance"], "shares": u["shares"]})
 
@@ -343,6 +360,7 @@ def api_short():
     price = data["stock_price"]
     get_user(data, uid)
     data.setdefault("shorts", {})[uid] = {"shares": shares, "entry_price": price}
+    log_transaction(data, uid, "short", f"Shorted {shares} SUS @ {fmt(price)}", 0)
     save_data(data)
     return jsonify({"ok": True, "shares": shares, "entry_price": price})
 
@@ -362,6 +380,7 @@ def api_cover():
     u = get_user(data, uid)
     u["balance"] = round(max(0, u["balance"] + pnl), 2)
     data["shorts"] = shorts
+    log_transaction(data, uid, "cover", f"Covered short @ {fmt(price)}", pnl)
     save_data(data)
     return jsonify({"ok": True, "pnl": pnl, "balance": u["balance"]})
 
@@ -427,6 +446,77 @@ def api_cancel_order():
     data["limit_orders"].pop(global_idx)
     save_data(data)
     return jsonify({"ok": True})
+
+
+# ── Transaction history & money transfers ──────────────────────────────────────
+
+def log_transaction(data, user_id, kind, detail, amount):
+    """Append a transaction to the user's history (stored in data.json)."""
+    hist = data.setdefault("history", {})
+    user_hist = hist.setdefault(str(user_id), [])
+    user_hist.append({
+        "kind": kind,          # buy, sell, short, cover, send, receive, dividend, company_buy, etc.
+        "detail": detail,
+        "amount": round(amount, 2),
+        "ts": int(time.time()),
+    })
+    hist[str(user_id)] = user_hist[-100:]  # keep last 100 per user
+
+
+@app.route("/api/history")
+def api_history():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    data = load_data()
+    hist = data.get("history", {}).get(session["user_id"], [])
+    return jsonify(list(reversed(hist)))
+
+
+@app.route("/api/verified_users")
+def api_verified_users():
+    """List verified users (for the send-money recipient picker). Verified only."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    data = load_data()
+    me = get_user(data, session["user_id"])
+    if not me.get("verified"):
+        return jsonify({"error": "not verified"}), 403
+    out = []
+    for uid, u in data["users"].items():
+        if u.get("verified") and uid != session["user_id"]:
+            out.append({"id": uid, "username": get_discord_username(uid) or f"User #{uid[-4:]}"})
+    return jsonify(out)
+
+
+@app.route("/api/send_money", methods=["POST"])
+def api_send_money():
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    data = load_data()
+    sender = get_user(data, session["user_id"])
+    if not sender.get("verified"):
+        return jsonify({"error": "Only verified accounts can send money"}), 403
+    recipient_id = str(request.json.get("recipient_id", ""))
+    amount = float(request.json.get("amount", 0))
+    if amount <= 0:
+        return jsonify({"error": "invalid amount"}), 400
+    if recipient_id == session["user_id"]:
+        return jsonify({"error": "can't send to yourself"}), 400
+    if recipient_id not in data["users"]:
+        return jsonify({"error": "recipient not found"}), 400
+    recipient = data["users"][recipient_id]
+    if not recipient.get("verified"):
+        return jsonify({"error": "Recipient must be verified to receive money"}), 400
+    if sender["balance"] < amount:
+        return jsonify({"error": "not enough cash"}), 400
+    sender["balance"] = round(sender["balance"] - amount, 2)
+    recipient["balance"] = round(recipient["balance"] + amount, 2)
+    recip_name = get_discord_username(recipient_id) or f"User #{recipient_id[-4:]}"
+    sender_name = session.get("username", "Someone")
+    log_transaction(data, session["user_id"], "send", f"Sent to {recip_name}", -amount)
+    log_transaction(data, recipient_id, "receive", f"Received from {sender_name}", amount)
+    save_data(data)
+    return jsonify({"ok": True, "balance": sender["balance"]})
 
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
@@ -692,6 +782,7 @@ def api_company_buy_stock(cid):
     new_price = company_stock_price(c, sus_price)
     c["stock_price"] = new_price
     c.setdefault("stock_history", []).append(new_price)
+    log_transaction(data, uid, "company_buy", f"Bought {shares} {c['ticker']} @ {fmt(price)}", -cost)
     save_data(data)
     save_companies(companies)
     return jsonify({"ok": True, "shares": shares, "cost": cost, "new_price": new_price})
@@ -732,6 +823,7 @@ def api_company_sell_stock(cid):
     new_price = company_stock_price(c, sus_price)
     c["stock_price"] = new_price
     c.setdefault("stock_history", []).append(new_price)
+    log_transaction(data, uid, "company_sell", f"Sold {shares} {c['ticker']} @ {fmt(price)}", earnings)
     save_data(data)
     save_companies(companies)
     return jsonify({"ok": True, "earnings": earnings})
@@ -1092,6 +1184,7 @@ DASHBOARD_HTML = """
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
+  <button onclick="toggleHistory()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">📜 History</button>
   <button onclick="toggleCompanies()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🏢 Companies</button>
   <div class="auth-area" id="auth-area">
     <a href="/login" class="btn btn-discord">
@@ -1200,6 +1293,17 @@ DASHBOARD_HTML = """
     </div>
 
   </div>
+</div>
+
+<!-- History drawer (pulls from left) -->
+<div id="history-overlay" onclick="toggleHistory()" style="position:fixed;inset:0;background:#0006;z-index:90;display:none;opacity:0;transition:opacity .3s"></div>
+<div id="history-drawer" style="position:fixed;top:0;left:-440px;width:min(440px,100vw);height:100vh;background:var(--surface);border-right:1px solid var(--border);z-index:91;transition:left .3s ease;overflow-y:auto;display:flex;flex-direction:column">
+  <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;position:sticky;top:0;background:var(--surface);z-index:1">
+    <span style="font-size:18px">📜</span>
+    <span style="font-size:15px;font-weight:700">My History</span>
+    <button onclick="toggleHistory()" style="margin-left:auto;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;line-height:1">✕</button>
+  </div>
+  <div id="history-list" style="padding:14px;flex:1">Loading...</div>
 </div>
 
 <!-- Companies drawer -->
@@ -1392,8 +1496,9 @@ async function fetchMe() {
     </div>
     <!-- Trading tabs -->
     <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">
-      ${['Buy','Sell','Short','Limits'].map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="zoom-btn ${t==='Buy'?'active':''}" style="flex:1">${t}</button>`).join('')}
+      ${(u.verified ? ['Buy','Sell','Short','Limits','Send'] : ['Buy','Sell','Short','Limits']).map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="zoom-btn ${t==='Buy'?'active':''}" style="flex:1">${t}</button>`).join('')}
     </div>
+    ${u.verified ? '<div style="font-size:10px;color:var(--green);font-weight:700;margin-bottom:8px">✓ VERIFIED ACCOUNT</div>' : ''}
 
     <div id="tab-buy-content">
       <input type="number" id="trade-amount" class="trade-input" placeholder="Shares to buy..." min="1"/>
@@ -1436,20 +1541,50 @@ async function fetchMe() {
             <button onclick="cancelOrder(${i})" style="margin-left:auto;background:none;border:none;color:var(--red);cursor:pointer;font-size:11px">✕ Cancel</button>
           </div>`).join('') : '<div style="color:var(--muted)">No active limit orders.</div>'}
       </div>
-    </div>`;
+    </div>
+
+    ${u.verified ? `<div id="tab-send-content" style="display:none">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Send cash to another verified user. Both accounts must be verified.</div>
+      <select id="send-recipient" class="trade-input"><option value="">Select recipient...</option></select>
+      <input type="number" id="send-amount" class="trade-input" placeholder="Amount" min="1"/>
+      <button class="btn btn-discord" style="width:100%" onclick="sendMoney()">📤 Send Money</button>
+    </div>` : ''}`;
   // Restore the previously active tab after re-render
   setTab(activeTab);
+  if (u.verified) loadRecipients();
 }
 
 let activeTab = 'buy';
 function setTab(tab) {
   activeTab = tab;
-  ['buy','sell','short','limits'].forEach(t => {
+  ['buy','sell','short','limits','send'].forEach(t => {
     const el = document.getElementById('tab-'+t+'-content');
     const btn = document.getElementById('tab-'+t);
     if (el) el.style.display = t === tab ? 'block' : 'none';
     if (btn) btn.classList.toggle('active', t === tab);
   });
+}
+
+async function loadRecipients() {
+  const sel = document.getElementById('send-recipient');
+  if (!sel) return;
+  const users = await fetch('/api/verified_users').then(r => r.ok ? r.json() : []).catch(() => []);
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Select recipient...</option>' + users.map(u => `<option value="${u.id}">${u.username}</option>`).join('');
+  sel.value = current;
+}
+
+async function sendMoney() {
+  const recipient_id = document.getElementById('send-recipient')?.value;
+  const amount = parseFloat(document.getElementById('send-amount')?.value);
+  if (!recipient_id) { showToast('Pick a recipient', false); return; }
+  if (!amount || amount <= 0) { showToast('Enter an amount', false); return; }
+  const res = await fetch('/api/send_money', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({recipient_id, amount})});
+  const d = await res.json();
+  if (!res.ok) { showToast(d.error, false); return; }
+  showToast(`Sent ${fmt(amount)}!`);
+  document.getElementById('send-amount').value = '';
+  fetchMe();
 }
 
 async function trade(action) {
@@ -1610,8 +1745,41 @@ fetchMe().then(() => initChat()).catch(() => initChat());
 setInterval(fetchStock, 10000);
 setInterval(fetchMe, 15000);
 
+// ── History drawer ─────────────────────────────────────────────────────────────
+let historyOpen = false;
+function toggleHistory() {
+  if (!myUserId) { showToast('Login first', false); return; }
+  historyOpen = !historyOpen;
+  const drawer = document.getElementById('history-drawer');
+  const overlay = document.getElementById('history-overlay');
+  drawer.style.left = historyOpen ? '0' : '-440px';
+  overlay.style.display = historyOpen ? 'block' : 'none';
+  setTimeout(() => { overlay.style.opacity = historyOpen ? '1' : '0'; }, 10);
+  if (historyOpen) loadHistory();
+}
+
+const HIST_ICONS = {buy:'📈',sell:'📉',short:'🐻',cover:'🔄',company_buy:'🏢',company_sell:'🏢',send:'📤',receive:'📥',dividend:'💵'};
+async function loadHistory() {
+  const list = document.getElementById('history-list');
+  const hist = await fetch('/api/history').then(r => r.ok ? r.json() : []).catch(() => []);
+  if (!hist.length) { list.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px 0">No transactions yet.</div>'; return; }
+  list.innerHTML = hist.map(h => {
+    const t = new Date(h.ts * 1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    const amtColor = h.amount > 0 ? 'var(--green)' : (h.amount < 0 ? 'var(--red)' : 'var(--muted)');
+    const amtStr = h.amount !== 0 ? `${h.amount > 0 ? '+' : ''}${fmt(h.amount)}` : '';
+    return `<div style="display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+      <span style="font-size:18px">${HIST_ICONS[h.kind] || '•'}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px">${h.detail}</div>
+        <div style="font-size:10px;color:var(--muted)">${t}</div>
+      </div>
+      <div style="font-weight:700;font-size:13px;color:${amtColor}">${amtStr}</div>
+    </div>`;
+  }).join('');
+}
+
 // ── Companies drawer ───────────────────────────────────────────────────────────
-const COMPANY_TYPES_MAP = {"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 3% every 20min on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."}};
+const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 3% every 20min on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."}};
 let companiesOpen = false;
 let detailOpen = false;
 let dcSelectedType = null;
@@ -1861,13 +2029,14 @@ async function loadAdmin() {
   users.forEach(u => {
     html += `
       <div style="background:var(--surface2);border-radius:8px;padding:10px 12px;margin-bottom:8px">
-        <div style="font-weight:700;margin-bottom:6px">${u.username} <span style="color:var(--muted);font-size:11px">#${u.id.slice(-4)}</span></div>
+        <div style="font-weight:700;margin-bottom:6px">${u.username} <span style="color:var(--muted);font-size:11px">#${u.id.slice(-4)}</span> ${u.verified ? '<span style="font-size:9px;font-weight:700;background:#57f28722;color:var(--green);padding:1px 6px;border-radius:999px">✓ VERIFIED</span>' : ''}</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Cash: ${fmt(u.cash)} · Shares: ${u.shares} · NW: ${fmt(u.net_worth)}</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px">
           <input id="shares-${u.id}" type="number" class="trade-input" placeholder="Shares (neg=remove)" style="width:150px;font-size:12px;padding:5px 8px"/>
           <button class="btn btn-buy" style="font-size:12px;padding:5px 10px" onclick="adminGiveShares('${u.id}')">± Shares</button>
           <input id="cash-${u.id}" type="number" class="trade-input" placeholder="Cash (neg=remove)" style="width:150px;font-size:12px;padding:5px 8px"/>
           <button class="btn btn-buy" style="font-size:12px;padding:5px 10px;background:#fee75c22;color:#fee75c;border-color:#fee75c40" onclick="adminGiveCash('${u.id}')">± Cash</button>
+          <button class="btn ${u.verified ? 'btn-sell' : 'btn-buy'}" style="font-size:12px;padding:5px 10px" onclick="adminVerify('${u.id}', ${!u.verified})">${u.verified ? 'Unverify' : '✓ Verify'}</button>
           <button class="btn btn-sell" style="font-size:12px;padding:5px 10px" onclick="adminReset('${u.id}', '${u.username}')">Reset</button>
         </div>
       </div>`;
@@ -1906,6 +2075,12 @@ async function adminReset(uid, name) {
   const res = await fetch('/api/admin/reset_user', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid}) });
   const d = await res.json();
   if (d.ok) { showToast(`Reset ${name}`); loadAdmin(); }
+}
+
+async function adminVerify(uid, verified) {
+  const res = await fetch('/api/admin/verify', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({user_id: uid, verified}) });
+  const d = await res.json();
+  if (d.ok) { showToast(verified ? 'User verified' : 'User unverified'); loadAdmin(); }
 }
 </script>
 </body>

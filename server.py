@@ -246,12 +246,26 @@ def admin_reset_market():
     data["pending_bull_bear"] = None
     data["notifications"] = {}
     data["history"] = {}
+
+    # Delete every store-created Discord role
+    gid = get_guild_id()
+    deleted = 0
+    if gid and DISCORD_BOT_TOKEN:
+        for role_id in data.get("store_roles", []):
+            try:
+                r = requests.delete(f"{DISCORD_API}/guilds/{gid}/roles/{role_id}", headers=_dh(), timeout=8)
+                if r.status_code in (200, 204):
+                    deleted += 1
+            except Exception:
+                pass
+    data["store_roles"] = []
+
     save_data(data)
     try:
         save_companies({})  # wipe all companies
     except Exception:
         pass
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "roles_deleted": deleted})
 
 
 @app.route("/api/admin/ban", methods=["POST"])
@@ -1670,6 +1684,7 @@ def api_store_role():
             return jsonify({"error": "Role made but couldn't assign (are you in the server?)"}), 500
     except Exception as e:
         return jsonify({"error": "Discord error"}), 500
+    data.setdefault("store_roles", []).append(role_id)  # track for market reset
     log_transaction(data, session["user_id"], "send", f"Bought custom role '{name}'", -4000)
     save_data(data)
     return jsonify({"ok": True})

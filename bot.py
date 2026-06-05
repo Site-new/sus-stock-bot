@@ -1112,6 +1112,119 @@ async def before_insider():
     await bot.wait_until_ready()
 
 
+COMPANY_DOCS = {
+    "hedge_fund": ("💼 Hedge Fund",
+        "Members pool cash and the CEO trades SUS with it, then shares out the winnings.\n\n"
+        "• Members **deposit** cash into the treasury.\n"
+        "• The CEO uses **Trade As Company** mode to buy/sell/short SUS with the pooled money.\n"
+        "• The CEO clicks **Distribute Profits** to split treasury among members by deposit share.\n\n"
+        "_Best when you trust the CEO to trade well. Returns scale with your deposit._"),
+    "day_trading": ("⚡ Day Trading LLC",
+        "The whole team votes on what to do, and the majority wins.\n\n"
+        "• Members vote **Buy**, **Sell**, or **Hold** each round.\n"
+        "• When the vote ends, the majority auto-executes: Buy spends ~half the treasury on SUS; Sell dumps all the company's SUS.\n\n"
+        "_Democratic trading for active groups._"),
+    "index_fund": ("📊 Index Fund",
+        "A hands-off fund that just rides the market.\n\n"
+        "• Every 20 minutes it **automatically buys SUS** with idle treasury cash.\n"
+        "• No CEO action needed — deposit, hold, and let the value track SUS.\n\n"
+        "_Lowest effort, steady market exposure._"),
+    "insider_ring": ("🔍 Insider Trading Ring",
+        "Sell early access to market news as a paid subscription.\n\n"
+        "• The CEO sets an **hourly subscription price**.\n"
+        "• Subscribers see every market event **5 minutes before the public**, with a live countdown — time to trade before the price moves.\n"
+        "• Subscribers are billed hourly into the treasury. The CEO gets news free and can **grant free access**.\n\n"
+        "_The most powerful info edge in the game, and steady income for the owner._"),
+    "short_cartel": ("🐻 Short Selling Cartel",
+        "A club that amplifies its members' short bets.\n\n"
+        "• Members who profit on a SUS short cover get a **2× bonus**, paid from the cartel treasury.\n"
+        "• Keep the treasury funded (via deposits) so it can pay out bonuses.\n\n"
+        "_Best when the market is trending down._"),
+    "pump_dump": ("🚀 Pump & Dump Crew",
+        "Coordinate to spike the price, then cash out.\n\n"
+        "• CEO buys SUS into the company first (Trade As Company).\n"
+        "• Members vote **Buy** — a majority pushes the SUS price target up ~2×.\n"
+        "• Then vote **Sell** — the company dumps its SUS into the spike.\n\n"
+        "_High risk, high drama. Timing the dump is everything._"),
+    "lending_bank": ("🏦 Lending Bank",
+        "Loan cash to players and collect interest.\n\n"
+        "• Players **request a loan** from the treasury and owe it back with **20% interest**.\n"
+        "• Interest is collected automatically each cycle.\n\n"
+        "_Steady income while borrowers keep borrowing._"),
+    "invest_bank": ("💳 Investment Bank",
+        "Take a cut of all the trading in the game.\n\n"
+        "• Earns a **3% commission** on **every company stock trade** across the market, paid into the treasury.\n"
+        "• No action needed — the busier the market, the more it earns."),
+    "savings": ("🐷 Savings Account",
+        "A safe place to park cash and earn guaranteed interest.\n\n"
+        "• Deposit cash and earn **3% every 20 minutes** from the treasury.\n"
+        "• No risk to the depositor while the treasury can pay.\n\n"
+        "_Low risk, slow steady growth._"),
+    "insurance": ("🛡️ Insurance Company",
+        "Sell protection against market crashes.\n\n"
+        "• Players pay a **premium** for coverage.\n"
+        "• If a policyholder's net worth drops **20%+**, the company automatically **pays them out**.\n\n"
+        "_Profits in calm markets, pays out in crashes — price your premiums wisely._"),
+    "bounty_hunter": ("🎯 Bounty Hunter",
+        "Players put hits on each other's portfolios.\n\n"
+        "• A player posts a **bounty** on a target (30% fee to the company).\n"
+        "• If the target's net worth drops enough, the bounty **pays out** to the poster."),
+    "market_maker": ("⚖️ Market Maker",
+        "Be the middleman — buy low, sell high, pocket the spread.\n\n"
+        "• The CEO sets a **buy price** and a **sell price** (the spread).\n"
+        "• Players trade SUS directly with the company; the gap is profit.\n\n"
+        "_Earns on volume. Keep both cash and SUS stocked._"),
+    "sus_mafia": ("🤌 Sus Mafia",
+        "Run a protection racket.\n\n"
+        "• Players and companies **pay protection** into the treasury.\n"
+        "• Lean on others to keep the payments coming."),
+    "wolf_pack": ("🐺 Wolf Pack",
+        "Move as one to slam the market up.\n\n"
+        "• A majority **buy vote** amplifies the SUS price target by ~**3×** — bigger than a pump & dump.\n"
+        "• Profits are shared by the pack."),
+    "casino": ("🎰 Casino",
+        "Players gamble against your treasury; the house edge earns you money.\n\n"
+        "• 🪙 Coin Flip — 48% to win 2×\n• 🃏 High Card — 45% to win 2.1×\n"
+        "• 🎲 Dice Roll — 33% to win 2.8×\n• 🎡 Roulette — 25% to win 3.6×\n• 🎰 Slots — 10% to win 8× jackpot\n\n"
+        "_Wins paid from treasury, losses go into it. Over time the house profits._"),
+}
+
+
+@bot.command(name="buildguide")
+@commands.has_permissions(administrator=True)
+async def buildguide_cmd(ctx):
+    """Create a read-only 'Guide' category with a channel per company type."""
+    guild = ctx.guild
+    await ctx.send("🔨 Building the Guide category...")
+    # Reuse existing category if present
+    category = discord.utils.get(guild.categories, name="Guide")
+    if category is None:
+        category = await guild.create_category("Guide")
+    # Read-only for @everyone
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(send_messages=False, add_reactions=False),
+        guild.me: discord.PermissionOverwrite(send_messages=True, manage_channels=True),
+    }
+    made = 0
+    for key, (title, body) in COMPANY_DOCS.items():
+        chan_name = key.replace("_", "-")
+        existing = discord.utils.get(category.channels, name=chan_name)
+        if existing is None:
+            channel = await guild.create_text_channel(chan_name, category=category, overwrites=overwrites)
+        else:
+            channel = existing
+        embed = discord.Embed(title=title, description=body, color=0x5865F2)
+        await channel.send(embed=embed)
+        made += 1
+    await ctx.send(f"✅ Guide built with {made} company channels (read-only).")
+
+
+@buildguide_cmd.error
+async def buildguide_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ You need Administrator permission to run this.")
+
+
 @bot.command(name="chattest")
 async def chattest_cmd(ctx):
     """Shows what channel the bot thinks is the chat channel."""

@@ -1254,6 +1254,11 @@ DASHBOARD_HTML = """
   </div>
 </header>
 
+<div id="market-timer" style="text-align:center;padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border);font-weight:800;letter-spacing:.5px">
+  <span id="timer-status" style="font-size:14px">—</span>
+  <span id="timer-countdown" style="font-size:26px;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
+</div>
+
 <div class="layout">
   <!-- News column -->
   <div class="news-col">
@@ -1410,6 +1415,44 @@ DASHBOARD_HTML = """
 <script>
 const fmt = v => '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
 const medals = ['🥇','🥈','🥉'];
+
+// ── Market open/close countdown (open 12pm–12am CST = UTC-6) ─────────────────────
+function updateMarketTimer() {
+  const nowUtc = new Date();
+  // CST = UTC-6
+  const cstMs = nowUtc.getTime() - 6 * 3600 * 1000;
+  const cst = new Date(cstMs);
+  const h = cst.getUTCHours(), m = cst.getUTCMinutes(), s = cst.getUTCSeconds();
+  const isOpen = h >= 12; // open noon to midnight
+  // Seconds until next boundary
+  let target; // hour boundary in CST
+  if (isOpen) target = 24;   // closes at midnight (24:00)
+  else target = 12;          // opens at noon
+  const secsNow = h * 3600 + m * 60 + s;
+  let remain = target * 3600 - secsNow;
+  if (remain < 0) remain += 24 * 3600;
+  const hh = String(Math.floor(remain / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((remain % 3600) / 60)).padStart(2, '0');
+  const ss = String(remain % 60).padStart(2, '0');
+
+  const statusEl = document.getElementById('timer-status');
+  const cdEl = document.getElementById('timer-countdown');
+  const banner = document.getElementById('market-timer');
+  if (isOpen) {
+    statusEl.textContent = '🟢 MARKET OPEN — closes in';
+    statusEl.style.color = 'var(--green)';
+    cdEl.style.color = 'var(--green)';
+    banner.style.background = 'linear-gradient(90deg, #57f28715, var(--surface))';
+  } else {
+    statusEl.textContent = '🔴 MARKET CLOSED — opens in';
+    statusEl.style.color = 'var(--red)';
+    cdEl.style.color = 'var(--red)';
+    banner.style.background = 'linear-gradient(90deg, #ed424515, var(--surface))';
+  }
+  cdEl.textContent = `${hh}:${mm}:${ss}`;
+}
+updateMarketTimer();
+setInterval(updateMarketTimer, 1000);
 let myUserId = null;
 
 function showToast(msg, ok=true) {

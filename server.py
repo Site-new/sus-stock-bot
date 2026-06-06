@@ -3319,10 +3319,24 @@ async function fetchStock() {
   document.getElementById('updated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
 }
 
+let meData = null;
+function setMaxShares(kind) {
+  if (!meData) return;
+  const price = meData.price || 0;
+  let max = 0;
+  if (kind === 'buy') max = price > 0 ? Math.floor(meData.cash / (price * (1 + 0.01))) : 0;
+  else if (kind === 'sell') max = meData.shares || 0;
+  else if (kind === 'short') max = price > 0 ? Math.floor(meData.cash / price) : 0;
+  const ids = { buy: 'trade-amount', sell: 'sell-amount', short: 'short-amount' };
+  const el = document.getElementById(ids[kind]);
+  if (el) el.value = Math.max(0, max);
+}
+
 async function fetchMe() {
   const res = await fetch('/api/me');
   if (!res.ok) { initChat(); return; }
   const u = await res.json();
+  meData = u;
   myUserId = u.user_id;
 
   // Update header
@@ -3397,12 +3411,18 @@ async function fetchMe() {
     </div>` : ''}
 
     <div id="tab-buy-content">
-      <input type="number" id="trade-amount" class="trade-input" placeholder="Shares to buy..." min="1"/>
+      <div style="display:flex;gap:6px">
+        <input type="number" id="trade-amount" class="trade-input" placeholder="Shares to buy..." min="1" style="flex:1;margin-bottom:0"/>
+        <button class="zoom-btn" onclick="setMaxShares('buy')">Max</button>
+      </div>
       <button class="btn btn-buy" style="width:100%;margin-top:8px" onclick="trade('buy')">📈 Buy SUS</button>
     </div>
 
     <div id="tab-sell-content" style="display:none">
-      <input type="number" id="sell-amount" class="trade-input" placeholder="Shares to sell..." min="1"/>
+      <div style="display:flex;gap:6px">
+        <input type="number" id="sell-amount" class="trade-input" placeholder="Shares to sell..." min="1" style="flex:1;margin-bottom:0"/>
+        <button class="zoom-btn" onclick="setMaxShares('sell')">Max</button>
+      </div>
       <button class="btn btn-sell" style="width:100%;margin-top:8px" onclick="trade('sell')">📉 Sell SUS</button>
     </div>
 
@@ -3416,7 +3436,10 @@ async function fetchMe() {
         <button class="btn btn-sell" style="width:100%" onclick="coverShort()">Close Short Position</button>
       ` : `
         <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Short selling lets you profit when the price drops. You borrow shares and buy them back later at a lower price.</div>
-        <input type="number" id="short-amount" class="trade-input" placeholder="Shares to short..." min="1"/>
+        <div style="display:flex;gap:6px">
+          <input type="number" id="short-amount" class="trade-input" placeholder="Shares to short..." min="1" style="flex:1;margin-bottom:0"/>
+          <button class="zoom-btn" onclick="setMaxShares('short')">Max</button>
+        </div>
         <button class="btn btn-sell" style="width:100%;margin-top:8px" onclick="openShort()">📉 Open Short</button>
       `}
     </div>

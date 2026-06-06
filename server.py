@@ -976,7 +976,7 @@ def user_analyst_rating(user_id):
             if c.get("ceo") == uid or uid in c.get("subscribers", {}):
                 r = c.get("rating", "Offline")
                 if r and r != "Offline":
-                    return r
+                    return f"{r} - {c.get('name', 'Analyst Firm')}"
     except Exception:
         pass
     return None

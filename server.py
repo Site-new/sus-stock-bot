@@ -1468,7 +1468,9 @@ def api_company_deposit(cid):
     u["balance"] = round(u["balance"] - amount, 2)
     c["treasury"] = round(c["treasury"] + amount, 2)
     c["members"][session["user_id"]]["deposit"] = round(c["members"][session["user_id"]].get("deposit", 0) + amount, 2)
-    if c["type"] == "savings":
+    # In a savings bank, the CEO's deposits are the bank's own capital — not a
+    # customer deposit, so they don't count as "owed" and don't earn interest.
+    if c["type"] == "savings" and not is_ceo(c, session["user_id"]):
         c.setdefault("deposits", {})[session["user_id"]] = round(c["deposits"].get(session["user_id"], 0) + amount, 2)
     save_data(data)
     save_companies(companies)
@@ -1494,7 +1496,7 @@ def api_company_withdraw(cid):
     c["treasury"] = round(c["treasury"] - amount, 2)
     member["deposit"] = round(max(0, member.get("deposit", 0) - amount), 2)
     u["balance"] = round(u["balance"] + amount, 2)
-    if c["type"] == "savings":
+    if c["type"] == "savings" and not is_ceo(c, uid):
         c.setdefault("deposits", {})[uid] = round(max(0, c["deposits"].get(uid, 0) - amount), 2)
     save_data(data)
     save_companies(companies)

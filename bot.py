@@ -788,8 +788,8 @@ async def process_companies():
                     add_news_event(data, f"📣 AD · {c['name']}: {ad}", True, 0, delay_public=False)
                     changed = True
 
-            # ── Insider Ring: charge subscribers their hourly fee when due ─────
-            if ctype == "insider_ring":
+            # ── Subscription companies: charge subscribers their hourly fee ───
+            if ctype in ("insider_ring", "analyst_firm"):
                 sub_price = c.get("sub_price", 0)
                 now_t = int(time.time())
                 for uid, sub in list(c.get("subscribers", {}).items()):

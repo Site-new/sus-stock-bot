@@ -452,6 +452,7 @@ def api_stock():
         "history": history[-100:], "timestamps": timestamps,
         "market_open": market_open, "bull_bear": cycle,
         "sentiment": sentiment, "news": news, "is_insider": is_insider,
+        "analyst_rating": analyst_rating(data) if user_has_analyst(session.get("user_id")) else None,
     })
 
 
@@ -963,6 +964,43 @@ def user_in_insider_ring(user_id):
     return False
 
 
+def analyst_rating(data):
+    """Compute a Buy/Sell/Hold rating from the hidden price target & cycle."""
+    price = data.get("stock_price", 50)
+    target = data.get("price_target", price)
+    score = (target / price) if price else 1.0
+    cycle = data.get("bull_bear", "neutral")
+    if cycle == "bull":
+        score += 0.1
+    elif cycle == "bear":
+        score -= 0.1
+    if score >= 1.25:
+        return "Strong Buy"
+    if score >= 1.07:
+        return "Buy"
+    if score <= 0.75:
+        return "Strong Sell"
+    if score <= 0.93:
+        return "Sell"
+    return "Hold"
+
+
+def user_has_analyst(user_id):
+    """True if the user runs or subscribes to any Analyst Firm."""
+    if not user_id:
+        return False
+    uid = str(user_id)
+    try:
+        for c in load_companies().values():
+            if c.get("type") != "analyst_firm":
+                continue
+            if c.get("ceo") == uid or uid in c.get("subscribers", {}):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def get_acting_company(companies):
     """Return (company_dict, company_id) the CEO is currently trading as, or (None, None)."""
     acting_id = session.get("acting_as")
@@ -1106,8 +1144,8 @@ def api_company_subscribe(cid):
         return jsonify({"error": "not logged in"}), 401
     companies = load_companies()
     c = companies.get(cid)
-    if not c or c["type"] != "insider_ring":
-        return jsonify({"error": "not an insider ring"}), 400
+    if not c or c["type"] not in ("insider_ring", "analyst_firm"):
+        return jsonify({"error": "not a subscription company"}), 400
     uid = session["user_id"]
     if uid in c.get("subscribers", {}):
         return jsonify({"error": "already subscribed"}), 400
@@ -1147,8 +1185,8 @@ def api_company_set_sub_price(cid):
         return jsonify({"error": "not logged in"}), 401
     companies = load_companies()
     c = companies.get(cid)
-    if not c or not is_ceo(c, session["user_id"]) or c["type"] != "insider_ring":
-        return jsonify({"error": "CEO of insider ring only"}), 403
+    if not c or not is_ceo(c, session["user_id"]) or c["type"] not in ("insider_ring", "analyst_firm"):
+        return jsonify({"error": "CEO of a subscription company only"}), 403
     c["sub_price"] = round(float(request.json.get("sub_price", 0)), 2)
     save_companies(companies)
     return jsonify({"ok": True, "sub_price": c["sub_price"]})
@@ -1234,7 +1272,7 @@ def api_company_grant_free(cid):
     if not target:
         return jsonify({"error": "enter a user ID"}), 400
     now = int(time.time())
-    if c["type"] == "insider_ring":
+    if c["type"] in ("insider_ring", "analyst_firm"):
         c.setdefault("subscribers", {})[target] = {"since": now, "next_due": now + 10**12, "free": True}
     else:
         c.setdefault("free_access", [])
@@ -1254,7 +1292,7 @@ def api_company_revoke_free(cid):
     if not c or not is_ceo(c, session["user_id"]):
         return jsonify({"error": "CEO only"}), 403
     target = str(request.json.get("user_id", "")).strip()
-    if c["type"] == "insider_ring":
+    if c["type"] in ("insider_ring", "analyst_firm"):
         sub = c.get("subscribers", {}).get(target)
         if sub and sub.get("free"):
             del c["subscribers"][target]
@@ -2581,6 +2619,7 @@ DASHBOARD_HTML = """
       <div class="price-hero">
         <span class="price" id="price">—</span>
         <span class="change-badge" id="change-badge">—</span>
+        <span id="analyst-rating" style="display:none;font-size:13px;font-weight:700;padding:4px 10px;border-radius:6px"></span>
       </div>
       <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">
         <span style="font-size:11px;color:var(--muted);align-self:center;margin-right:4px">Zoom:</span>
@@ -2589,6 +2628,7 @@ DASHBOARD_HTML = """
         <button class="zoom-btn" onclick="setZoom(60,'30m')" data-z="30m">30m</button>
         <button class="zoom-btn" onclick="setZoom(120,'1h')" data-z="1h">1h</button>
         <button class="zoom-btn" onclick="setZoom(0,'all')" data-z="all">All</button>
+        <button class="zoom-btn" id="candle-toggle" onclick="toggleCandles()" style="margin-left:auto">🕯️ Candles</button>
       </div>
       <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
       <div class="range-bar-wrap">
@@ -3068,32 +3108,48 @@ function showToast(msg, ok=true) {
 
 // Chart
 const ctx = document.getElementById('priceChart').getContext('2d');
-const chart = new Chart(ctx, {
-  type: 'line',
-  data: { labels: [], datasets: [{ data: [], borderColor: '#57f287', backgroundColor: 'rgba(87,242,135,0.08)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 }] },
-  options: {
-    responsive: true, maintainAspectRatio: false, animation: { duration: 400 },
+let chart = null;
+let chartMode = 'line';
+
+function chartOptions() {
+  return {
+    responsive: true, maintainAspectRatio: false, animation: { duration: 250 },
     plugins: { legend: { display: false }, tooltip: { callbacks: {
-      label: c => fmt(c.parsed.y),
+      label: c => { const r = c.raw; return Array.isArray(r) ? fmt(r[1]) : fmt(c.parsed.y); },
       title: items => items[0].label || ''
     }}},
     scales: {
-      x: {
-        display: true,
-        ticks: {
-          color: '#949ba4',
-          maxTicksLimit: 6,
-          maxRotation: 0,
-          autoSkip: true,
-          font: { size: 10 }
-        },
-        grid: { display: false },
-        border: { display: false }
-      },
+      x: { display: true, stacked: false, ticks: { color: '#949ba4', maxTicksLimit: 6, maxRotation: 0, autoSkip: true, font: { size: 10 } }, grid: { display: false }, border: { display: false } },
       y: { grid: { color: '#3a3c40' }, ticks: { color: '#949ba4', callback: v => fmt(v) }, border: { display: false } }
     }
+  };
+}
+function ensureChart(type) {
+  if (chart && chart.config.type === type) return;
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, { type: type, data: { labels: [], datasets: [] }, options: chartOptions() });
+}
+ensureChart('line');
+
+function toggleCandles() {
+  chartMode = chartMode === 'line' ? 'candle' : 'line';
+  const btn = document.getElementById('candle-toggle');
+  if (btn) btn.textContent = chartMode === 'candle' ? '📈 Line' : '🕯️ Candles';
+  renderChart();
+}
+
+function buildCandles(h, t) {
+  const n = h.length;
+  const groupSize = Math.max(1, Math.floor(n / 30));
+  const candles = [];
+  for (let i = 0; i < n; i += groupSize) {
+    const grp = h.slice(i, i + groupSize);
+    if (!grp.length) continue;
+    candles.push({ o: grp[0], c: grp[grp.length - 1], hi: Math.max(...grp), lo: Math.min(...grp),
+                   label: t[Math.min(i + grp.length - 1, t.length - 1)] || '' });
   }
-});
+  return candles;
+}
 
 async function fetchStock() {
   const d = await fetch('/api/stock').then(r => r.json());
@@ -3104,6 +3160,20 @@ async function fetchStock() {
   const badge = document.getElementById('change-badge');
   badge.textContent = `${up?'+':''}${fmt(change)} (${up?'+':''}${pct}%)`;
   badge.className = 'change-badge ' + (up ? 'up' : 'down');
+  // Analyst rating (only for Analyst Firm subscribers)
+  const arEl = document.getElementById('analyst-rating');
+  if (arEl) {
+    if (d.analyst_rating) {
+      const r = d.analyst_rating;
+      const buy = r.includes('Buy'), sell = r.includes('Sell');
+      arEl.style.display = 'inline-block';
+      arEl.textContent = '📋 ' + r;
+      arEl.style.background = buy ? '#57f28722' : (sell ? '#ed424522' : 'var(--surface2)');
+      arEl.style.color = buy ? 'var(--green)' : (sell ? 'var(--red)' : 'var(--muted)');
+    } else {
+      arEl.style.display = 'none';
+    }
+  }
   fullHistory = history;
   fullTimestamps = timestamps || [];
   renderChart();
@@ -3441,12 +3511,28 @@ function setZoom(points, label) {
 function renderChart() {
   const h = zoomPoints > 0 ? fullHistory.slice(-zoomPoints) : fullHistory;
   const t = zoomPoints > 0 ? fullTimestamps.slice(-zoomPoints) : fullTimestamps;
-  const up = h.length < 2 || h[h.length-1] >= h[0];
-  chart.data.datasets[0].borderColor = up ? '#57f287' : '#ed4245';
-  chart.data.datasets[0].backgroundColor = up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)';
-  chart.data.labels = t.length ? t : h.map((_,i) => i);
-  chart.data.datasets[0].data = h;
-  chart.update();
+  if (!h.length) return;
+  if (chartMode === 'candle') {
+    ensureChart('bar');
+    const candles = buildCandles(h, t);
+    chart.data.labels = candles.map(c => c.label);
+    chart.data.datasets = [
+      { label: 'wick', data: candles.map(c => [c.lo, c.hi]), backgroundColor: '#888',
+        barThickness: 2, grouped: false, categoryPercentage: 1, barPercentage: 1 },
+      { label: 'body', data: candles.map(c => [Math.min(c.o, c.c), Math.max(c.o, c.c)]),
+        backgroundColor: candles.map(c => c.c >= c.o ? '#57f287' : '#ed4245'),
+        grouped: false, categoryPercentage: 1, barPercentage: 0.7 },
+    ];
+    chart.update();
+  } else {
+    ensureChart('line');
+    const up = h.length < 2 || h[h.length-1] >= h[0];
+    chart.data.labels = t.length ? t : h.map((_,i) => i);
+    chart.data.datasets = [{ data: h, borderColor: up ? '#57f287' : '#ed4245',
+      backgroundColor: up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)',
+      borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 }];
+    chart.update();
+  }
 }
 
 function tsToTime(ts) {
@@ -3541,7 +3627,7 @@ async function loadHistory() {
 }
 
 // ── Companies drawer ───────────────────────────────────────────────────────────
-const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 1% per hour on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."}};
+const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 1% per hour on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."},"analyst_firm":{"name":"Analyst Firm","emoji":"📋","desc":"Sell Buy/Sell/Hold ratings as a subscription."}};
 let companiesOpen = false;
 let detailOpen = false;
 let dcSelectedType = null;
@@ -3718,8 +3804,8 @@ async function openDrawerCompany(cid) {
       })()}
     </div>` : ''}
 
-    ${c.type === 'insider_ring' ? `<div style="margin-bottom:12px">
-      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🔍 Subscribers (${(c._subscribers_list||[]).length})</div>
+    ${(c.type === 'insider_ring' || c.type === 'analyst_firm') ? `<div style="margin-bottom:12px">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🔖 Subscribers (${(c._subscribers_list||[]).length})</div>
       ${(c._subscribers_list && c._subscribers_list.length) ? c._subscribers_list.map(s => `
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border)">
           <span>${s.free ? '🎁 ' : ''}${s.name}</span>
@@ -3845,6 +3931,26 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       }
       return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">${inner}</div>`;
     }
+    case 'analyst_firm': {
+      const subbed = c.subscribers && c.subscribers[myUserId];
+      const price = c.sub_price || 0;
+      const subCount = c.subscribers ? Object.keys(c.subscribers).length : 0;
+      let inner = `<div style="font-size:12px;font-weight:700;margin-bottom:6px">📋 Analyst Firm · ${subCount} subscriber(s)</div>`;
+      if (isCeo) {
+        inner += `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">You're the owner — you see ratings free.</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="number" id="d-subprice" class="trade-input" placeholder="$/hour" value="${price}" style="flex:1;margin-bottom:0"/>
+            <button class="btn btn-discord" onclick="dSetSubPrice('${cid}')">Set Price</button>
+          </div>`;
+      } else if (subbed) {
+        inner += `<div style="font-size:13px;color:var(--green);margin-bottom:6px">✓ Subscribed — Buy/Sell/Hold ratings show on the market chart (${fmt(price)}/hr)</div>
+          <button class="btn btn-sell" style="width:100%" onclick="dUnsubscribe('${cid}')">Cancel Subscription</button>`;
+      } else {
+        inner += `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Subscribe for ${fmt(price)}/hour to get live Buy/Sell/Hold ratings on SUS.</div>
+          <button class="btn btn-discord" style="width:100%" onclick="dSubscribe('${cid}')">Subscribe — ${fmt(price)}/hr</button>`;
+      }
+      return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">${inner}</div>`;
+    }
     default: return '';
   }
 }
@@ -3915,7 +4021,7 @@ function selectDcType(type, el) {
   document.querySelectorAll('#dc-type-grid > div').forEach(e => e.style.borderColor='var(--border)');
   el.style.borderColor = 'var(--accent)';
   document.getElementById('dc-type').value = type; dcSelectedType = type;
-  document.getElementById('dc-subprice-wrap').style.display = (type === 'insider_ring') ? 'block' : 'none';
+  document.getElementById('dc-subprice-wrap').style.display = (type === 'insider_ring' || type === 'analyst_firm') ? 'block' : 'none';
 }
 async function submitCreateDrawer() {
   const name=document.getElementById('dc-name').value.trim();

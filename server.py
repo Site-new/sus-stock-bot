@@ -3360,7 +3360,7 @@ async function fetchStock() {
   // Disable the SUS trade buttons while the market is closed
   if (d.market_open !== undefined) {
     document.querySelectorAll('.btn-buy, .btn-sell').forEach(b => {
-      const isTradeBtn = /trade\(|openShort\(|coverShort\(|placeLimit\(/.test(b.getAttribute('onclick') || '');
+      const isTradeBtn = /trade\\(|openShort\\(|coverShort\\(|placeLimit\\(/.test(b.getAttribute('onclick') || '');
       if (isTradeBtn) {
         b.disabled = !d.market_open;
         b.style.opacity = d.market_open ? '' : '0.5';

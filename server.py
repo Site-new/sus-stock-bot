@@ -16,6 +16,7 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
     {"date": "Jun 6", "items": [
+        "📱 The site is now mobile-friendly — the top buttons collapse into a ☰ menu and tap targets are bigger.",
         "🔴 While the market is closed (12am–12pm CST) the SUS price is frozen, no news happens, and you can't buy/sell/short. Companies, the lottery, the store, and server unlocks still work.",
         "📈 The buy/sell average-cost line now also shows when you trade as a company.",
         "🔍 Insider Rings can now upgrade their lead time (2–5 min before the public). Faster tiers cost upkeep from the treasury every 20 min.",
@@ -2700,6 +2701,43 @@ DASHBOARD_HTML = """
   .chat-msg.me .chat-name { text-align: right; color: var(--green); }
   #chat-messages::-webkit-scrollbar { width: 4px; }
   #chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Nav buttons (header) */
+  .nav-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .nav-buttons > button, .nav-buttons > a { margin-left: 0 !important; }
+  .hamburger { display: none; margin-left: auto; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 20px; line-height: 1; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+
+  /* ── Mobile ─────────────────────────────────────────────── */
+  @media(max-width:800px){
+    header { flex-wrap: wrap; padding: 12px 16px; gap: 8px; }
+    header h1 { font-size: 17px; }
+    .hamburger { display: inline-flex; }
+    .nav-buttons {
+      display: none; order: 10; width: 100%;
+      flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px;
+    }
+    .nav-buttons.open { display: flex; }
+    .nav-buttons > button, .nav-buttons > a {
+      width: 100%; justify-content: flex-start;
+      padding: 13px 16px !important; font-size: 15px !important; border-radius: 10px;
+    }
+    .auth-area { width: 100%; order: 11; margin-left: 0; margin-top: 6px; }
+    .auth-area .btn { width: 100%; justify-content: center; padding: 13px 16px; font-size: 15px; }
+    .auth-area #acct-chip { width: 100%; justify-content: space-between; }
+
+    /* Roomier tap targets + readable type on phones */
+    .price { font-size: 34px; }
+    .card { padding: 16px; }
+    .chart-wrap { height: 220px; }
+    .zoom-btn { padding: 7px 12px; font-size: 12px; }
+    .trade-input { padding: 11px 14px; font-size: 16px; }  /* 16px stops iOS zoom-on-focus */
+    .btn-buy, .btn-sell { padding: 12px 16px; font-size: 15px; }
+    .btn { padding: 11px 16px; }
+    #market-timer { padding: 10px 14px; }
+    #timer-countdown { font-size: 22px; }
+    /* Modals behave like full-width sheets */
+    .modal-sheet { width: 96vw !important; max-height: 92vh !important; padding: 18px !important; }
+  }
 </style>
 </head>
 <body>
@@ -2709,6 +2747,8 @@ DASHBOARD_HTML = """
   <h1>Sus Stock Market</h1>
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
+  <button class="hamburger" onclick="toggleNav()" aria-label="Menu">☰</button>
+  <div class="nav-buttons" id="nav-buttons" onclick="if(window.innerWidth<=800)this.classList.remove('open')">
   <button id="linkmc-btn" onclick="openLinkMC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🟩 Link MC</button>
   <a href="/guide" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px;text-decoration:none">📖 Guide</a>
   <button onclick="openUpdates()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🆕 Updates</button>
@@ -2717,6 +2757,7 @@ DASHBOARD_HTML = """
   <button onclick="openLottery()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🎟️ Lottery</button>
   <button onclick="toggleHistory()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">📜 History</button>
   <button onclick="toggleCompanies()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🏢 Companies</button>
+  </div>
   <div class="auth-area" id="auth-area">
     <a href="/login" class="btn btn-discord">
       <svg width="16" height="12" viewBox="0 0 71 55" fill="white"><path d="M60.1 4.9A58.6 58.6 0 0 0 45.6.4a.2.2 0 0 0-.2.1 40.8 40.8 0 0 0-1.8 3.7 54.1 54.1 0 0 0-16.2 0 37.6 37.6 0 0 0-1.8-3.7.22.22 0 0 0-.2-.1A58.4 58.4 0 0 0 10.9 4.9a.2.2 0 0 0-.1.1C1.6 18.1-.9 31 .3 43.7a.24.24 0 0 0 .1.2 58.9 58.9 0 0 0 17.7 8.9.22.22 0 0 0 .2-.1 42 42 0 0 0 3.6-5.9.21.21 0 0 0-.1-.3 38.7 38.7 0 0 1-5.5-2.6.22.22 0 0 1 0-.4c.4-.3.7-.5 1.1-.8a.21.21 0 0 1 .2 0c11.5 5.3 24 5.3 35.4 0a.21.21 0 0 1 .2 0l1.1.8a.22.22 0 0 1 0 .4 36.3 36.3 0 0 1-5.5 2.6.22.22 0 0 0-.1.3 47.1 47.1 0 0 0 3.6 5.9.21.21 0 0 0 .2.1 58.7 58.7 0 0 0 17.7-8.9.23.23 0 0 0 .1-.2c1.5-15.1-2.4-28-10.4-39.5a.18.18 0 0 0-.1-.2zM23.7 36c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2zm23.6 0c-3.5 0-6.4-3.2-6.4-7.2s2.8-7.2 6.4-7.2c3.6 0 6.5 3.3 6.4 7.2 0 4-2.8 7.2-6.4 7.2z"/></svg>
@@ -3019,6 +3060,12 @@ function updateMarketTimer() {
 }
 updateMarketTimer();
 setInterval(updateMarketTimer, 1000);
+
+// ── Mobile nav ───────────────────────────────────────────────────────────────────
+function toggleNav() {
+  const n = document.getElementById('nav-buttons');
+  if (n) n.classList.toggle('open');
+}
 
 // ── Updates / changelog ────────────────────────────────────────────────────────
 async function openUpdates() {

@@ -3529,9 +3529,17 @@ function renderChart() {
         backgroundColor: candles.map(c => c.c >= c.o ? '#57f287' : '#ed4245'),
         grouped: false, categoryPercentage: 1, barPercentage: 0.7 },
     ];
+    // Zoom y-axis to the price range (don't start at $0)
+    const lo = Math.min(...candles.map(c => c.lo));
+    const hi = Math.max(...candles.map(c => c.hi));
+    const pad = Math.max((hi - lo) * 0.1, hi * 0.01);
+    chart.options.scales.y.min = Math.max(0, lo - pad);
+    chart.options.scales.y.max = hi + pad;
     chart.update();
   } else {
     ensureChart('line');
+    chart.options.scales.y.min = undefined;
+    chart.options.scales.y.max = undefined;
     const up = h.length < 2 || h[h.length-1] >= h[0];
     chart.data.labels = t.length ? t : h.map((_,i) => i);
     chart.data.datasets = [{ data: h, borderColor: up ? '#57f287' : '#ed4245',

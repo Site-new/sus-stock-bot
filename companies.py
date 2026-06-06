@@ -24,6 +24,7 @@ COMPANY_TYPES = {
     "wolf_pack":      {"name": "Wolf Pack",              "emoji": "🐺", "desc": "Mass buy votes amplify price 3×. Profits shared equally."},
     "casino":         {"name": "Casino",                 "emoji": "🎰", "desc": "Players gamble against your treasury. House edge earns you money."},
     "analyst_firm":   {"name": "Analyst Firm",           "emoji": "📋", "desc": "Sell Buy/Sell/Hold stock ratings as an hourly subscription."},
+    "copy_trading":   {"name": "Copy Trading",           "emoji": "🔁", "desc": "Subscribers auto-mirror the company's SUS trades on their own account."},
 }
 
 

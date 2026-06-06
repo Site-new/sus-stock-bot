@@ -591,7 +591,9 @@ def api_buy():
             return jsonify({"error": f"Company needs {fmt(cost)} (incl. 3% fee), has {fmt(acting['treasury'])}"}), 400
         acting["treasury"] = round(acting["treasury"] - cost, 2)
         acting["sus_shares"] = acting.get("sus_shares", 0) + shares
+        mirror_copy_trades(data, acting, "buy", shares, price)
         save_companies(companies)
+        save_data(data)
         return jsonify({"ok": True, "bought": shares, "cost": cost, "balance": acting["treasury"], "shares": acting["sus_shares"]})
     u = get_user(data, session["user_id"])
     if u["balance"] < cost:
@@ -620,7 +622,9 @@ def api_sell():
             return jsonify({"error": f"Company only has {acting.get('sus_shares', 0)} shares"}), 400
         acting["sus_shares"] -= shares
         acting["treasury"] = round(acting["treasury"] + earnings, 2)
+        mirror_copy_trades(data, acting, "sell", shares, price)
         save_companies(companies)
+        save_data(data)
         return jsonify({"ok": True, "sold": shares, "earnings": earnings, "balance": acting["treasury"], "shares": acting["sus_shares"]})
     u = get_user(data, session["user_id"])
     if u["shares"] < shares:
@@ -944,6 +948,8 @@ from companies import (load_companies, save_companies, company_value,
                        company_stock_price, create_company, is_ceo,
                        get_member, COMPANY_TYPES, COMPANY_COST, SHARES_ISSUED)
 
+SUB_TYPES = ("insider_ring", "analyst_firm", "copy_trading")
+
 
 def user_in_insider_ring(user_id):
     """True if the user runs (CEO) or is a paying subscriber of any Insider Ring."""
@@ -980,6 +986,34 @@ def user_analyst_rating(user_id):
     except Exception:
         pass
     return None
+
+
+def mirror_copy_trades(data, company, action, shares, price):
+    """Replicate a copy-trading company's SUS trade onto subscribers who have copy on."""
+    if company.get("type") != "copy_trading":
+        return
+    ceo = company.get("ceo")
+    for uid, sub in company.get("subscribers", {}).items():
+        if uid == ceo or not sub.get("copy"):
+            continue
+        u = data["users"].get(uid)
+        if not u:
+            continue
+        if action == "buy":
+            affordable = int(u["balance"] // (price * (1 + TRADE_FEE))) if price else 0
+            n = min(shares, affordable)
+            if n > 0:
+                cost = round(price * n * (1 + TRADE_FEE), 2)
+                u["balance"] = round(u["balance"] - cost, 2)
+                u["shares"] = u.get("shares", 0) + n
+                log_transaction(data, uid, "buy", f"🔁 Copied {company['ticker']}: bought {n} SUS", -cost)
+        else:
+            n = min(shares, u.get("shares", 0))
+            if n > 0:
+                earn = round(price * n * (1 - TRADE_FEE), 2)
+                u["shares"] -= n
+                u["balance"] = round(u["balance"] + earn, 2)
+                log_transaction(data, uid, "sell", f"🔁 Copied {company['ticker']}: sold {n} SUS", earn)
 
 
 def get_acting_company(companies):
@@ -1125,7 +1159,7 @@ def api_company_subscribe(cid):
         return jsonify({"error": "not logged in"}), 401
     companies = load_companies()
     c = companies.get(cid)
-    if not c or c["type"] not in ("insider_ring", "analyst_firm"):
+    if not c or c["type"] not in SUB_TYPES:
         return jsonify({"error": "not a subscription company"}), 400
     uid = session["user_id"]
     if uid in c.get("subscribers", {}):
@@ -1166,7 +1200,7 @@ def api_company_set_sub_price(cid):
         return jsonify({"error": "not logged in"}), 401
     companies = load_companies()
     c = companies.get(cid)
-    if not c or not is_ceo(c, session["user_id"]) or c["type"] not in ("insider_ring", "analyst_firm"):
+    if not c or not is_ceo(c, session["user_id"]) or c["type"] not in SUB_TYPES:
         return jsonify({"error": "CEO of a subscription company only"}), 403
     c["sub_price"] = round(float(request.json.get("sub_price", 0)), 2)
     save_companies(companies)
@@ -1253,7 +1287,7 @@ def api_company_grant_free(cid):
     if not target:
         return jsonify({"error": "enter a user ID"}), 400
     now = int(time.time())
-    if c["type"] in ("insider_ring", "analyst_firm"):
+    if c["type"] in SUB_TYPES:
         c.setdefault("subscribers", {})[target] = {"since": now, "next_due": now + 10**12, "free": True}
     else:
         c.setdefault("free_access", [])
@@ -1273,7 +1307,7 @@ def api_company_revoke_free(cid):
     if not c or not is_ceo(c, session["user_id"]):
         return jsonify({"error": "CEO only"}), 403
     target = str(request.json.get("user_id", "")).strip()
-    if c["type"] in ("insider_ring", "analyst_firm"):
+    if c["type"] in SUB_TYPES:
         sub = c.get("subscribers", {}).get(target)
         if sub and sub.get("free"):
             del c["subscribers"][target]
@@ -1282,6 +1316,22 @@ def api_company_revoke_free(cid):
             c["free_access"].remove(target)
     save_companies(companies)
     return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/copy_toggle", methods=["POST"])
+def api_company_copy_toggle(cid):
+    """Subscriber toggles auto-copy on/off for a copy-trading company."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    uid = session["user_id"]
+    if not c or c["type"] != "copy_trading" or uid not in c.get("subscribers", {}):
+        return jsonify({"error": "subscribe first"}), 400
+    sub = c["subscribers"][uid]
+    sub["copy"] = not sub.get("copy", False)
+    save_companies(companies)
+    return jsonify({"ok": True, "copy": sub["copy"]})
 
 
 @app.route("/api/companies/<cid>/set_rating", methods=["POST"])
@@ -3617,7 +3667,7 @@ async function loadHistory() {
 }
 
 // ── Companies drawer ───────────────────────────────────────────────────────────
-const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 1% per hour on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."},"analyst_firm":{"name":"Analyst Firm","emoji":"📋","desc":"Sell Buy/Sell/Hold ratings as a subscription."}};
+const COMPANY_TYPES_MAP ={"hedge_fund":{"name":"Hedge Fund","emoji":"💼","desc":"Pool money and trade SUS together."},"day_trading":{"name":"Day Trading LLC","emoji":"⚡","desc":"Members vote every hour on buy/sell."},"index_fund":{"name":"Index Fund","emoji":"📊","desc":"Auto-buys SUS every 20min."},"insider_ring":{"name":"Insider Trading Ring","emoji":"🔍","desc":"Members see news early."},"short_cartel":{"name":"Short Selling Cartel","emoji":"🐻","desc":"Coordinated shorts hit 2× harder."},"pump_dump":{"name":"Pump & Dump Crew","emoji":"🚀","desc":"Mass buys spike the price 2×."},"lending_bank":{"name":"Lending Bank","emoji":"🏦","desc":"Lend cash at interest."},"invest_bank":{"name":"Investment Bank","emoji":"💳","desc":"Earn 3% commission on stock trades."},"savings":{"name":"Savings Account","emoji":"🐷","desc":"Earn 1% per hour on deposits."},"insurance":{"name":"Insurance Company","emoji":"🛡️","desc":"Pay out if portfolio drops 20%+."},"bounty_hunter":{"name":"Bounty Hunter","emoji":"🎯","desc":"Post bounties on players."},"market_maker":{"name":"Market Maker","emoji":"⚖️","desc":"Set buy/sell spread for users."},"sus_mafia":{"name":"Sus Mafia","emoji":"🤌","desc":"Charge protection from companies."},"wolf_pack":{"name":"Wolf Pack","emoji":"🐺","desc":"Mass buy amplifies price 3×."},"casino":{"name":"Casino","emoji":"🎰","desc":"Players gamble against your treasury."},"analyst_firm":{"name":"Analyst Firm","emoji":"📋","desc":"Sell Buy/Sell/Hold ratings as a subscription."},"copy_trading":{"name":"Copy Trading","emoji":"🔁","desc":"Subscribers auto-mirror your SUS trades."}};
 let companiesOpen = false;
 let detailOpen = false;
 let dcSelectedType = null;
@@ -3782,7 +3832,7 @@ async function openDrawerCompany(cid) {
       })()}
     </div>` : ''}
 
-    ${(c.type === 'insider_ring' || c.type === 'analyst_firm') ? `<div style="margin-bottom:12px">
+    ${['insider_ring','analyst_firm','copy_trading'].includes(c.type) ? `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🔖 Subscribers (${(c._subscribers_list||[]).length})</div>
       ${(c._subscribers_list && c._subscribers_list.length) ? c._subscribers_list.map(s => `
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;padding:5px 0;border-bottom:1px solid var(--border)">
@@ -3936,6 +3986,29 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       }
       return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">${inner}</div>`;
     }
+    case 'copy_trading': {
+      const sub = c.subscribers && c.subscribers[myUserId];
+      const price = c.sub_price || 0;
+      const subCount = c.subscribers ? Object.keys(c.subscribers).length : 0;
+      let inner = `<div style="font-size:12px;font-weight:700;margin-bottom:6px">🔁 Copy Trading · ${subCount} subscriber(s)</div>`;
+      if (isCeo) {
+        inner += `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">Subscribers mirror the SUS trades you make in <b>Trade As Company</b> mode.</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="number" id="d-subprice" class="trade-input" placeholder="$/hour" value="${price}" style="flex:1;margin-bottom:0"/>
+            <button class="btn btn-discord" onclick="dSetSubPrice('${cid}')">Set Price</button>
+          </div>`;
+      } else if (sub) {
+        const on = sub.copy;
+        inner += `<div style="font-size:12px;color:var(--green);margin-bottom:6px">✓ Subscribed (${fmt(price)}/hr)</div>
+          <button class="btn ${on?'btn-sell':'btn-buy'}" style="width:100%;margin-bottom:6px" onclick="dCopyToggle('${cid}')">Auto-Copy: ${on?'ON ✅ (click to turn off)':'OFF (click to turn on)'}</button>
+          <button class="btn btn-logout" style="width:100%" onclick="dUnsubscribe('${cid}')">Cancel Subscription</button>
+          <div style="font-size:10px;color:var(--muted);margin-top:4px">When ON, you auto-buy/sell SUS whenever the company does.</div>`;
+      } else {
+        inner += `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Subscribe for ${fmt(price)}/hour, then toggle auto-copy to mirror the company's SUS trades.</div>
+          <button class="btn btn-discord" style="width:100%" onclick="dSubscribe('${cid}')">Subscribe — ${fmt(price)}/hr</button>`;
+      }
+      return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">${inner}</div>`;
+    }
     default: return '';
   }
 }
@@ -3981,6 +4054,7 @@ async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`
 async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
 async function dSetRating(cid, rating) { await dAction(`/api/companies/${cid}/set_rating`,{rating},'Rating set to '+rating,cid); }
+async function dCopyToggle(cid) { await dAction(`/api/companies/${cid}/copy_toggle`,{},'Auto-copy toggled',cid); }
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
 async function dBuyUpgrade(cid, upgrade) { await dAction(`/api/companies/${cid}/buy_upgrade`,{upgrade},'Upgrade purchased!',cid); }
 async function dSetAd(cid) { const ad=document.getElementById('d-ad-input')?.value||''; await dAction(`/api/companies/${cid}/set_ad`,{ad_text:ad},'Ad saved',cid); }
@@ -4006,7 +4080,7 @@ function selectDcType(type, el) {
   document.querySelectorAll('#dc-type-grid > div').forEach(e => e.style.borderColor='var(--border)');
   el.style.borderColor = 'var(--accent)';
   document.getElementById('dc-type').value = type; dcSelectedType = type;
-  document.getElementById('dc-subprice-wrap').style.display = (type === 'insider_ring' || type === 'analyst_firm') ? 'block' : 'none';
+  document.getElementById('dc-subprice-wrap').style.display = ['insider_ring','analyst_firm','copy_trading'].includes(type) ? 'block' : 'none';
 }
 async function submitCreateDrawer() {
   const name=document.getElementById('dc-name').value.trim();

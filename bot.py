@@ -782,7 +782,7 @@ async def process_companies():
                     changed = True
 
             # ── Subscription companies: charge subscribers their hourly fee ───
-            if ctype in ("insider_ring", "analyst_firm"):
+            if ctype in ("insider_ring", "analyst_firm", "copy_trading"):
                 sub_price = c.get("sub_price", 0)
                 now_t = int(time.time())
                 for uid, sub in list(c.get("subscribers", {}).items()):

@@ -1303,28 +1303,6 @@ def api_company_revoke_free(cid):
     return jsonify({"ok": True})
 
 
-@app.route("/api/companies/<cid>/set_salary", methods=["POST"])
-def api_company_set_salary(cid):
-    """CEO sets a member's salary (paid from treasury each 20-min cycle)."""
-    if "user_id" not in session:
-        return jsonify({"error": "not logged in"}), 401
-    companies = load_companies()
-    c = companies.get(cid)
-    if not c or not is_ceo(c, session["user_id"]):
-        return jsonify({"error": "CEO only"}), 403
-    target = str(request.json.get("user_id", ""))
-    salary = max(0, float(request.json.get("salary", 0)))
-    if target not in c.get("members", {}):
-        return jsonify({"error": "not a member of this company"}), 400
-    emps = c.setdefault("employees", {})
-    if salary <= 0:
-        emps.pop(target, None)
-    else:
-        emps[target] = round(salary, 2)
-    save_companies(companies)
-    return jsonify({"ok": True})
-
-
 def _mkt_level(c):
     m = c.get("upgrades", {}).get("marketing", 0)
     return 1 if m is True else int(m or 0)  # migrate legacy bool
@@ -3784,18 +3762,6 @@ async function openDrawerCompany(cid) {
         </div>`).join('') : '<div style="color:var(--muted);font-size:12px">No investors yet.</div>'}
     </div>
 
-    <!-- Payroll -->
-    <div style="margin-bottom:12px">
-      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">💼 Payroll ${c._my_salary ? `· You earn ${fmt(c._my_salary)}/cycle` : ''}</div>
-      ${isCeo ? (c._members_list||[]).map(mem => `
-        <div style="display:flex;align-items:center;gap:6px;font-size:12px;padding:4px 0">
-          <span style="flex:1">${mem.name}${mem.is_ceo?' (you)':''}</span>
-          <input type="number" id="sal-${mem.id}" class="trade-input" placeholder="0" value="${mem.salary||''}" style="width:90px;margin-bottom:0;padding:4px 8px;font-size:12px"/>
-          <button class="btn btn-discord" style="padding:4px 8px;font-size:11px" onclick="dSetSalary('${cid}','${mem.id}')">Set</button>
-        </div>`).join('')
-        : `<div style="font-size:12px;color:var(--muted)">${c._my_salary ? 'You are on payroll, paid every 20 min.' : 'Not on payroll.'}</div>`}
-    </div>
-
     <!-- Upgrades -->
     ${isCeo ? `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">⚙️ Upgrades</div>
@@ -4010,7 +3976,6 @@ async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`
 async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
-async function dSetSalary(cid, uid) { const s=parseFloat(document.getElementById('sal-'+uid)?.value)||0; await dAction(`/api/companies/${cid}/set_salary`,{user_id:uid,salary:s},'Salary set',cid); }
 async function dBuyUpgrade(cid, upgrade) { await dAction(`/api/companies/${cid}/buy_upgrade`,{upgrade},'Upgrade purchased!',cid); }
 async function dSetAd(cid) { const ad=document.getElementById('d-ad-input')?.value||''; await dAction(`/api/companies/${cid}/set_ad`,{ad_text:ad},'Ad saved',cid); }
 async function dDistribute(cid) { const a=parseFloat(document.getElementById('d-dist-amt')?.value); if(!a){showToast('Enter amount',false);return;} await dAction(`/api/companies/${cid}/distribute`,{amount:a},'Profits distributed!',cid); }

@@ -2751,6 +2751,13 @@ DASHBOARD_HTML = """
         <div class="card-title" style="margin-bottom:0">SUS / USD</div>
         <span id="market-badge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:#57f28722;color:var(--green)">🟢 OPEN</span>
       </div>
+      <div id="closed-banner" style="display:none;background:#ed424522;border:1px solid #ed424566;border-radius:10px;padding:12px 14px;margin-bottom:12px;display:none;align-items:center;gap:12px">
+        <span style="font-size:26px">🔴</span>
+        <div style="flex:1">
+          <div style="font-size:15px;font-weight:800;color:var(--red)">MARKET CLOSED</div>
+          <div style="font-size:12px;color:var(--muted)">Price is frozen — no trading until the bell. Opens <b>12:00pm CST</b> · <span id="closed-countdown">—</span></div>
+        </div>
+      </div>
       <div class="price-hero">
         <span class="price" id="price">—</span>
         <span class="change-badge" id="change-badge">—</span>
@@ -2765,7 +2772,12 @@ DASHBOARD_HTML = """
         <button class="zoom-btn" onclick="setZoom(0,'all')" data-z="all">All</button>
         <button class="zoom-btn" id="candle-toggle" onclick="toggleCandles()" style="margin-left:auto">🕯️ Candles</button>
       </div>
-      <div class="chart-wrap"><canvas id="priceChart"></canvas></div>
+      <div class="chart-wrap" style="position:relative">
+        <canvas id="priceChart"></canvas>
+        <div id="chart-closed-overlay" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;pointer-events:none">
+          <span style="font-size:clamp(22px,6vw,46px);font-weight:900;letter-spacing:4px;color:#ed424533;border:3px solid #ed424533;padding:6px 22px;border-radius:12px;transform:rotate(-8deg)">CLOSED</span>
+        </div>
+      </div>
       <div class="range-bar-wrap">
         <div class="range-labels"><span>Min $5.00</span><span id="range-label">—</span><span>Max $500.00</span></div>
         <div class="range-bar">
@@ -3315,6 +3327,19 @@ function buildCandles(h, t) {
   return candles;
 }
 
+function updateClosedCountdown() {
+  const el = document.getElementById('closed-countdown');
+  if (!el) return;
+  // Current time in CST (UTC-6), read via UTC fields
+  const cst = new Date(Date.now() - 6 * 3600000);
+  const secsNow = cst.getUTCHours() * 3600 + cst.getUTCMinutes() * 60 + cst.getUTCSeconds();
+  let diff = 12 * 3600 - secsNow;        // seconds until noon CST
+  if (diff <= 0) diff += 24 * 3600;
+  const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60), s = diff % 60;
+  el.textContent = `opens in ${h}h ${m}m ${s}s`;
+}
+setInterval(() => { const b = document.getElementById('closed-banner'); if (b && b.style.display !== 'none') updateClosedCountdown(); }, 1000);
+
 async function fetchStock() {
   const d = await fetch('/api/stock').then(r => r.json());
   const { price, change, change_pct: pct, history, timestamps } = d;
@@ -3356,6 +3381,14 @@ async function fetchStock() {
     mb.textContent = d.market_open ? '🟢 OPEN' : '🔴 CLOSED';
     mb.style.background = d.market_open ? '#57f28722' : '#ed424522';
     mb.style.color = d.market_open ? 'var(--green)' : 'var(--red)';
+  }
+  // Big closed banner + chart watermark + countdown to open
+  if (d.market_open !== undefined) {
+    const banner = document.getElementById('closed-banner');
+    const overlay = document.getElementById('chart-closed-overlay');
+    if (banner) banner.style.display = d.market_open ? 'none' : 'flex';
+    if (overlay) overlay.style.display = d.market_open ? 'none' : 'flex';
+    if (!d.market_open) updateClosedCountdown();
   }
   // Disable the SUS trade buttons while the market is closed
   if (d.market_open !== undefined) {

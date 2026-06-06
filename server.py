@@ -3946,10 +3946,14 @@ function setZoom(points, label) {
   renderChart();
 }
 
+let chartAnimated = false;
 function renderChart() {
   const h = zoomPoints > 0 ? fullHistory.slice(-zoomPoints) : fullHistory;
   const t = zoomPoints > 0 ? fullTimestamps.slice(-zoomPoints) : fullTimestamps;
   if (!h.length) return;
+  // Animate the entrance only once; refreshes update silently so it doesn't replay.
+  const updateMode = chartAnimated ? 'none' : undefined;
+  chartAnimated = true;
   if (chartMode === 'candle') {
     ensureChart('bar');
     const candles = buildCandles(h, t);
@@ -3970,7 +3974,7 @@ function renderChart() {
     const pad = Math.max((hi - lo) * 0.1, hi * 0.01);
     chart.options.scales.y.min = Math.max(0, lo - pad);
     chart.options.scales.y.max = hi + pad;
-    chart.update();
+    chart.update(updateMode);
   } else {
     ensureChart('line');
     chart.options.scales.y.min = undefined;
@@ -3991,7 +3995,7 @@ function renderChart() {
       pointHoverRadius: 5, pointHoverBackgroundColor: '#fff', pointHoverBorderColor: dotColor, pointHoverBorderWidth: 2 }];
     const cl = costLineDataset(chart.data.labels.length);
     if (cl) chart.data.datasets.push(cl);
-    chart.update();
+    chart.update(updateMode);
   }
 }
 

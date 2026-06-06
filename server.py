@@ -569,6 +569,7 @@ def api_me():
             "verified": u.get("verified", False), "is_admin": is_admin(),
             "acting_as": {"id": acting["id"], "name": acting["name"], "ticker": acting["ticker"]},
             "my_companies": my_companies,
+            "avg_cost": acting.get("avg_cost", 0),
         })
 
     invested = round(u["shares"] * price, 2)
@@ -618,7 +619,10 @@ def api_buy():
         if acting["treasury"] < cost:
             return jsonify({"error": f"Company needs {fmt(cost)} (incl. 1% fee), has {fmt(acting['treasury'])}"}), 400
         acting["treasury"] = round(acting["treasury"] - cost, 2)
-        acting["sus_shares"] = acting.get("sus_shares", 0) + shares
+        old_cshares = acting.get("sus_shares", 0)
+        old_cavg = acting.get("avg_cost", 0)
+        acting["avg_cost"] = round((old_cavg * old_cshares + price * shares) / (old_cshares + shares), 4) if (old_cshares + shares) > 0 else 0
+        acting["sus_shares"] = old_cshares + shares
         mirror_copy_trades(data, acting, "buy", shares, price)
         save_companies(companies)
         save_data(data)
@@ -654,6 +658,8 @@ def api_sell():
             return jsonify({"error": f"Company only has {acting.get('sus_shares', 0)} shares"}), 400
         acting["sus_shares"] -= shares
         acting["treasury"] = round(acting["treasury"] + earnings, 2)
+        if acting["sus_shares"] <= 0:
+            acting["avg_cost"] = 0
         mirror_copy_trades(data, acting, "sell", shares, price)
         save_companies(companies)
         save_data(data)
@@ -3416,7 +3422,7 @@ async function fetchMe() {
   // Portfolio
   const pnlColor = u.pnl >= 0 ? 'var(--green)' : 'var(--red)';
   isLoggedIn = true;
-  myAvgCost = (!u.acting_as && u.shares > 0) ? (u.avg_cost || 0) : 0;
+  myAvgCost = (u.shares > 0) ? (u.avg_cost || 0) : 0;
   renderChart();
   const mcBtn = document.getElementById('linkmc-btn');
   if (mcBtn) {

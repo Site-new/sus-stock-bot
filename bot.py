@@ -1006,19 +1006,6 @@ async def fluctuate_price():
         if new_price == price and earnings_impact == 0:
             return
 
-        # Stock split: if price >= 400, split 2-for-1
-        if new_price >= 400:
-            new_price = round(new_price / 2, 2)
-            for uid, u in data["users"].items():
-                u["shares"] *= 2
-                # Also double short positions
-                if "shorts" in data and uid in data["shorts"]:
-                    data["shorts"][uid]["shares"] *= 2
-                    data["shorts"][uid]["entry_price"] /= 2
-            headline = f"📊 Sus Corp Stock Split 2-for-1 at ${new_price*2:.2f}! All shares doubled."
-            add_news_event(data, headline, True, 0)
-            print(f"[split] 2-for-1 at ${new_price*2:.2f}")
-
         data["stock_price"] = new_price
         history = data.get("price_history", [])
         history.append(new_price)

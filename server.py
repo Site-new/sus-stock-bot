@@ -16,6 +16,7 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
     {"date": "Jun 6", "items": [
+        "✂️ Stock splits removed — the price no longer halves at $400, and share counts stay normal.",
         "🕗 Market hours are now 8am–midnight Houston time. While closed, the trade buttons simply gray out (the big CLOSED banner is gone).",
         "🎚️ Trade tabs (Buy/Sell/Short…) now use a sliding segmented switcher, and empty sections show friendly placeholders instead of plain text.",
         "🪄 More polish — glowing dot on the latest price, gold avg-buy line, app icon, safe-area support for notched phones, and the Guide/Companies pages now match the new look.",

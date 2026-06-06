@@ -91,6 +91,7 @@ def create_company(founder_id, name, ticker, company_type, description="", sub_p
         "sub_price": round(float(sub_price), 2),  # insider_ring: $/hour subscription
         "subscribers": {},     # insider_ring: {uid: {since: ts}}
         "employees": {},       # {uid: salary_per_cycle}
+        "rating": "Offline",   # analyst_firm: CEO-set Buy/Hold/Sell/Offline
         "upgrades": {"vault": 0, "marketing": 0},  # vault level, marketing level (0-5)
         "ad_text": "",         # marketing: custom ad posted to market news
         "last_ad": 0,          # marketing: timestamp of last ad

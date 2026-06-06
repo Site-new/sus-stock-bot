@@ -452,7 +452,7 @@ def api_stock():
         "history": history[-100:], "timestamps": timestamps,
         "market_open": market_open, "bull_bear": cycle,
         "sentiment": sentiment, "news": news, "is_insider": is_insider,
-        "analyst_rating": analyst_rating(data) if user_has_analyst(session.get("user_id")) else None,
+        "analyst_rating": user_analyst_rating(session.get("user_id")),
     })
 
 
@@ -964,41 +964,22 @@ def user_in_insider_ring(user_id):
     return False
 
 
-def analyst_rating(data):
-    """Compute a Buy/Sell/Hold rating from the hidden price target & cycle."""
-    price = data.get("stock_price", 50)
-    target = data.get("price_target", price)
-    score = (target / price) if price else 1.0
-    cycle = data.get("bull_bear", "neutral")
-    if cycle == "bull":
-        score += 0.1
-    elif cycle == "bear":
-        score -= 0.1
-    if score >= 1.25:
-        return "Strong Buy"
-    if score >= 1.07:
-        return "Buy"
-    if score <= 0.75:
-        return "Strong Sell"
-    if score <= 0.93:
-        return "Sell"
-    return "Hold"
-
-
-def user_has_analyst(user_id):
-    """True if the user runs or subscribes to any Analyst Firm."""
+def user_analyst_rating(user_id):
+    """Return the rating set by the Analyst Firm this user runs/subscribes to (or None)."""
     if not user_id:
-        return False
+        return None
     uid = str(user_id)
     try:
         for c in load_companies().values():
             if c.get("type") != "analyst_firm":
                 continue
             if c.get("ceo") == uid or uid in c.get("subscribers", {}):
-                return True
+                r = c.get("rating", "Offline")
+                if r and r != "Offline":
+                    return r
     except Exception:
         pass
-    return False
+    return None
 
 
 def get_acting_company(companies):
@@ -1301,6 +1282,23 @@ def api_company_revoke_free(cid):
             c["free_access"].remove(target)
     save_companies(companies)
     return jsonify({"ok": True})
+
+
+@app.route("/api/companies/<cid>/set_rating", methods=["POST"])
+def api_company_set_rating(cid):
+    """Analyst Firm CEO sets the Buy/Hold/Sell/Offline rating."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]) or c["type"] != "analyst_firm":
+        return jsonify({"error": "CEO of analyst firm only"}), 403
+    rating = request.json.get("rating", "")
+    if rating not in ("Offline", "Buy", "Hold", "Sell"):
+        return jsonify({"error": "invalid rating"}), 400
+    c["rating"] = rating
+    save_companies(companies)
+    return jsonify({"ok": True, "rating": rating})
 
 
 def _mkt_level(c):
@@ -3917,7 +3915,14 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       const subCount = c.subscribers ? Object.keys(c.subscribers).length : 0;
       let inner = `<div style="font-size:12px;font-weight:700;margin-bottom:6px">📋 Analyst Firm · ${subCount} subscriber(s)</div>`;
       if (isCeo) {
-        inner += `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">You're the owner — you see ratings free.</div>
+        const cur = c.rating || 'Offline';
+        const ratingBtns = ['Offline','Buy','Hold','Sell'].map(r => {
+          const active = cur === r;
+          const col = r==='Buy'?'btn-buy':r==='Sell'?'btn-sell':'btn-logout';
+          return `<button class="btn ${col}" style="flex:1;${active?'outline:2px solid #fff':''}" onclick="dSetRating('${cid}','${r}')">${r}</button>`;
+        }).join('');
+        inner += `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">Set the rating your subscribers see (current: <b>${cur}</b>):</div>
+          <div style="display:flex;gap:4px;margin-bottom:8px">${ratingBtns}</div>
           <div style="display:flex;gap:6px;align-items:center">
             <input type="number" id="d-subprice" class="trade-input" placeholder="$/hour" value="${price}" style="flex:1;margin-bottom:0"/>
             <button class="btn btn-discord" onclick="dSetSubPrice('${cid}')">Set Price</button>
@@ -3975,6 +3980,7 @@ async function dGamble(cid, game) {
 async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`,{},'Subscribed to insider ring!',cid); }
 async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
+async function dSetRating(cid, rating) { await dAction(`/api/companies/${cid}/set_rating`,{rating},'Rating set to '+rating,cid); }
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
 async function dBuyUpgrade(cid, upgrade) { await dAction(`/api/companies/${cid}/buy_upgrade`,{upgrade},'Upgrade purchased!',cid); }
 async function dSetAd(cid) { const ad=document.getElementById('d-ad-input')?.value||''; await dAction(`/api/companies/${cid}/set_ad`,{ad_text:ad},'Ad saved',cid); }

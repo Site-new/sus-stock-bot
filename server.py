@@ -2783,6 +2783,18 @@ DASHBOARD_HTML = """
     [id$="-modal"] > div { width: 100% !important; max-width: 100% !important; border-radius: var(--r-xl) var(--r-xl) 0 0 !important; max-height: 90vh !important; animation: sheetUp .3s cubic-bezier(.4,0,.2,1); }
   }
   @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+  /* Sticky mobile Buy/Sell bar */
+  #mobile-trade-bar { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 120; gap: 10px;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: rgba(20,22,28,.92); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border-top: 1px solid var(--border); box-shadow: 0 -6px 24px rgba(0,0,0,.4); }
+  #mobile-trade-bar button { flex: 1; padding: 15px; font-size: 16px; font-weight: 800; border-radius: var(--r); cursor: pointer; transition: transform .12s ease, filter .15s ease; }
+  #mobile-trade-bar button:active { transform: scale(.97); }
+  @media(max-width:800px){
+    body.show-tradebar #mobile-trade-bar { display: flex; }
+    body.show-tradebar { padding-bottom: 84px; }
+  }
 </style>
 </head>
 <body>
@@ -2904,7 +2916,7 @@ DASHBOARD_HTML = """
     <div id="admin-area" style="display:none"></div>
 
     <!-- Portfolio -->
-    <div class="card">
+    <div class="card" id="portfolio-card">
       <div class="card-title">📊 My Portfolio</div>
       <div id="portfolio-area">
         <div style="text-align:center;padding:20px 8px">
@@ -3063,6 +3075,10 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<div id="mobile-trade-bar">
+  <button class="btn-buy" onclick="quickTrade('buy')">📈 Buy</button>
+  <button class="btn-sell" onclick="quickTrade('sell')">📉 Sell</button>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -3595,6 +3611,7 @@ async function fetchMe() {
   // Portfolio
   const pnlColor = u.pnl >= 0 ? 'var(--green)' : 'var(--red)';
   isLoggedIn = true;
+  document.body.classList.add('show-tradebar');
   myAvgCost = (u.shares > 0) ? (u.avg_cost || 0) : 0;
   renderChart();
   const mcBtn = document.getElementById('linkmc-btn');
@@ -3733,6 +3750,17 @@ function setTab(tab) {
     if (el) el.style.display = t === tab ? 'block' : 'none';
     if (btn) btn.classList.toggle('active', t === tab);
   });
+}
+
+// Sticky mobile bar → open the right trade tab, scroll to it, focus the amount box
+function quickTrade(tab) {
+  setTab(tab);
+  const card = document.getElementById('portfolio-card');
+  if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => {
+    const inp = document.getElementById(tab === 'sell' ? 'sell-amount' : 'trade-amount');
+    if (inp) inp.focus({ preventScroll: true });
+  }, 450);
 }
 
 async function loadRecipients() {

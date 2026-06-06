@@ -2704,8 +2704,10 @@ DASHBOARD_HTML = """
 
   /* Nav buttons (header) */
   .nav-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .nav-buttons > button, .nav-buttons > a { margin-left: 0 !important; }
+  .nav-buttons > button, .nav-buttons > a { margin-left: 0 !important; display: inline-flex; align-items: center; }
   .hamburger { display: none; margin-left: auto; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 20px; line-height: 1; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+  #nav-backdrop { position: fixed; inset: 0; background: #0007; z-index: 150; opacity: 0; pointer-events: none; transition: opacity .28s ease; }
+  #nav-backdrop.open { opacity: 1; pointer-events: auto; }
 
   /* ── Mobile ─────────────────────────────────────────────── */
   @media(max-width:800px){
@@ -2713,13 +2715,17 @@ DASHBOARD_HTML = """
     header h1 { font-size: 17px; }
     .hamburger { display: inline-flex; }
     .nav-buttons {
-      display: none; order: 10; width: 100%;
-      flex-direction: column; align-items: stretch; gap: 6px; margin-top: 8px;
+      position: fixed; top: 0; left: 0; height: 100dvh; width: min(80vw, 300px);
+      background: var(--surface); border-right: 1px solid var(--border);
+      box-shadow: 4px 0 24px #0007;
+      display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+      padding: 70px 14px 24px; overflow-y: auto; z-index: 200;
+      transform: translateX(-100%); transition: transform .28s cubic-bezier(.4,0,.2,1);
     }
-    .nav-buttons.open { display: flex; }
+    .nav-buttons.open { transform: translateX(0); }
     .nav-buttons > button, .nav-buttons > a {
       width: 100%; justify-content: flex-start;
-      padding: 13px 16px !important; font-size: 15px !important; border-radius: 10px;
+      padding: 14px 16px !important; font-size: 15px !important; border-radius: 10px;
     }
     .auth-area { width: 100%; order: 11; margin-left: 0; margin-top: 6px; }
     .auth-area .btn { width: 100%; justify-content: center; padding: 13px 16px; font-size: 15px; }
@@ -2748,7 +2754,7 @@ DASHBOARD_HTML = """
   <span class="tag">LIVE</span>
   <div class="live-dot"></div>
   <button class="hamburger" onclick="toggleNav()" aria-label="Menu">☰</button>
-  <div class="nav-buttons" id="nav-buttons" onclick="if(window.innerWidth<=800)this.classList.remove('open')">
+  <div class="nav-buttons" id="nav-buttons" onclick="if(window.innerWidth<=800)closeNav()">
   <button id="linkmc-btn" onclick="openLinkMC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🟩 Link MC</button>
   <a href="/guide" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px;text-decoration:none">📖 Guide</a>
   <button onclick="openUpdates()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🆕 Updates</button>
@@ -2765,6 +2771,7 @@ DASHBOARD_HTML = """
     </a>
   </div>
 </header>
+<div id="nav-backdrop" onclick="closeNav()"></div>
 
 <div id="market-timer" style="text-align:center;padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border);font-weight:800;letter-spacing:.5px">
   <span id="timer-status" style="font-size:14px">—</span>
@@ -3064,7 +3071,13 @@ setInterval(updateMarketTimer, 1000);
 // ── Mobile nav ───────────────────────────────────────────────────────────────────
 function toggleNav() {
   const n = document.getElementById('nav-buttons');
-  if (n) n.classList.toggle('open');
+  const b = document.getElementById('nav-backdrop');
+  const open = n ? n.classList.toggle('open') : false;
+  if (b) b.classList.toggle('open', open);
+}
+function closeNav() {
+  document.getElementById('nav-buttons')?.classList.remove('open');
+  document.getElementById('nav-backdrop')?.classList.remove('open');
 }
 
 // ── Updates / changelog ────────────────────────────────────────────────────────

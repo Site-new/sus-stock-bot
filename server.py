@@ -3767,12 +3767,13 @@ function applyMarketLock() {
       b.disabled = !open;
       b.style.opacity = open ? '' : '0.45';
       b.style.cursor = open ? '' : 'not-allowed';
+      b.style.pointerEvents = open ? '' : 'none';  // kills hover/press animation too
       b.title = open ? '' : 'Market closed (opens 8am Houston time)';
     }
   });
   ['trade-amount','sell-amount','short-amount','lshares','lprice'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.disabled = !open; el.style.opacity = open ? '' : '0.45'; }
+    if (el) { el.disabled = !open; el.style.opacity = open ? '' : '0.45'; el.style.pointerEvents = open ? '' : 'none'; }
   });
 }
 

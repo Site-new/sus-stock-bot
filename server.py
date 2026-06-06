@@ -11,7 +11,7 @@ app.secret_key = os.environ.get("FLASK_SECRET", secrets.token_hex(32))
 DATA_FILE = os.environ.get("DATA_FILE", "/data/data.json" if os.path.isdir("/data") else "data.json")
 CHAT_FILE = DATA_FILE.replace("data.json", "chat.json")
 STARTING_BALANCE = 1000.0
-TRADE_FEE = 0.03  # 3% fee on SUS buys and sells (slows progression, drains money)
+TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains money)
 
 DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET")
@@ -571,6 +571,7 @@ def api_me():
         "send_limit": send_limit(get_credit(u)),
         "mc_linked": next((l.get("username") for l in data.get("mc_links", {}).values()
                            if l.get("discord_id") == uid), None),
+        "avg_cost": u.get("avg_cost", 0),
     })
 
 
@@ -588,7 +589,7 @@ def api_buy():
     acting, acting_id = get_acting_company(companies)
     if acting:
         if acting["treasury"] < cost:
-            return jsonify({"error": f"Company needs {fmt(cost)} (incl. 3% fee), has {fmt(acting['treasury'])}"}), 400
+            return jsonify({"error": f"Company needs {fmt(cost)} (incl. 1% fee), has {fmt(acting['treasury'])}"}), 400
         acting["treasury"] = round(acting["treasury"] - cost, 2)
         acting["sus_shares"] = acting.get("sus_shares", 0) + shares
         mirror_copy_trades(data, acting, "buy", shares, price)
@@ -597,10 +598,14 @@ def api_buy():
         return jsonify({"ok": True, "bought": shares, "cost": cost, "balance": acting["treasury"], "shares": acting["sus_shares"]})
     u = get_user(data, session["user_id"])
     if u["balance"] < cost:
-        return jsonify({"error": f"Not enough cash. Need {fmt(cost)} (incl. 3% fee), have {fmt(u['balance'])}"}), 400
+        return jsonify({"error": f"Not enough cash. Need {fmt(cost)} (incl. 1% fee), have {fmt(u['balance'])}"}), 400
     u["balance"] = round(u["balance"] - cost, 2)
+    # Update average cost basis (price paid per share, excl. fee)
+    old_shares = u["shares"]
+    old_avg = u.get("avg_cost", 0)
+    u["avg_cost"] = round((old_avg * old_shares + price * shares) / (old_shares + shares), 4) if (old_shares + shares) > 0 else 0
     u["shares"] += shares
-    log_transaction(data, session["user_id"], "buy", f"Bought {shares} SUS @ {fmt(price)} (3% fee)", -cost)
+    log_transaction(data, session["user_id"], "buy", f"Bought {shares} SUS @ {fmt(price)} (1% fee)", -cost)
     save_data(data)
     return jsonify({"ok": True, "bought": shares, "cost": cost, "balance": u["balance"], "shares": u["shares"]})
 
@@ -631,7 +636,9 @@ def api_sell():
         return jsonify({"error": f"You only have {u['shares']} shares"}), 400
     u["shares"] -= shares
     u["balance"] = round(u["balance"] + earnings, 2)
-    log_transaction(data, session["user_id"], "sell", f"Sold {shares} SUS @ {fmt(price)} (3% fee)", earnings)
+    if u["shares"] <= 0:
+        u["avg_cost"] = 0  # reset cost basis when fully sold out
+    log_transaction(data, session["user_id"], "sell", f"Sold {shares} SUS @ {fmt(price)} (1% fee)", earnings)
     save_data(data)
     return jsonify({"ok": True, "sold": shares, "earnings": earnings, "balance": u["balance"], "shares": u["shares"]})
 
@@ -3282,6 +3289,8 @@ async function fetchMe() {
   // Portfolio
   const pnlColor = u.pnl >= 0 ? 'var(--green)' : 'var(--red)';
   isLoggedIn = true;
+  myAvgCost = (!u.acting_as && u.shares > 0) ? (u.avg_cost || 0) : 0;
+  renderChart();
   const mcBtn = document.getElementById('linkmc-btn');
   if (mcBtn) {
     if (u.mc_linked) {
@@ -3533,6 +3542,13 @@ let isLoggedIn = false;
 let zoomPoints = 10; // default 5m (10 × 30s ticks)
 let fullHistory = [];
 let fullTimestamps = [];
+let myAvgCost = 0;
+
+function costLineDataset(len) {
+  if (!myAvgCost || myAvgCost <= 0) return null;
+  return { type: 'line', label: 'Your avg buy', data: new Array(len).fill(myAvgCost),
+    borderColor: '#fee75c', borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false };
+}
 
 function setZoom(points, label) {
   zoomPoints = points;
@@ -3555,9 +3571,12 @@ function renderChart() {
         backgroundColor: candles.map(c => c.c >= c.o ? '#57f287' : '#ed4245'),
         grouped: false, categoryPercentage: 1, barPercentage: 0.7 },
     ];
-    // Zoom y-axis to the price range (don't start at $0)
-    const lo = Math.min(...candles.map(c => c.lo));
-    const hi = Math.max(...candles.map(c => c.hi));
+    const cl = costLineDataset(candles.length);
+    if (cl) chart.data.datasets.push(cl);
+    // Zoom y-axis to the price range (don't start at $0), include cost line
+    let lo = Math.min(...candles.map(c => c.lo));
+    let hi = Math.max(...candles.map(c => c.hi));
+    if (myAvgCost > 0) { lo = Math.min(lo, myAvgCost); hi = Math.max(hi, myAvgCost); }
     const pad = Math.max((hi - lo) * 0.1, hi * 0.01);
     chart.options.scales.y.min = Math.max(0, lo - pad);
     chart.options.scales.y.max = hi + pad;
@@ -3571,6 +3590,8 @@ function renderChart() {
     chart.data.datasets = [{ data: h, borderColor: up ? '#57f287' : '#ed4245',
       backgroundColor: up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)',
       borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 }];
+    const cl = costLineDataset(chart.data.labels.length);
+    if (cl) chart.data.datasets.push(cl);
     chart.update();
   }
 }
@@ -3899,11 +3920,21 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       ${c._my_loan ? `<div style="color:var(--red);margin-bottom:6px;font-size:13px">You owe: ${fmt(c._my_loan.due)}</div><button class="btn btn-sell" style="width:100%" onclick="dRepayLoan('${cid}')">Repay Loan</button>`
       : `<input type="number" id="d-loan-amt" class="trade-input" placeholder="Loan amount"/><button class="btn btn-discord" style="width:100%" onclick="dRequestLoan('${cid}')">Request Loan</button>`}
     </div>`;
-    case 'savings': return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
+    case 'savings': {
+      const owed = Object.values(c.deposits || {}).reduce((s, v) => s + v, 0);
+      const profit = (c._value || 0) - owed;
+      return `<div style="margin-bottom:12px;background:var(--surface);border-radius:8px;padding:12px">
       <div style="font-size:12px;font-weight:700;margin-bottom:4px">🐷 Savings — 1% per hour</div>
       <div style="font-size:13px;color:var(--green)">Your deposit: ${fmt(c._my_deposit||0)}</div>
-      <div style="font-size:11px;color:var(--muted)">Deposit to treasury to earn interest automatically.</div>
+      <div style="font-size:11px;color:var(--muted)">Deposit to earn interest. The CEO invests the pooled deposits and keeps the gains.</div>
+      ${isCeo ? `<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">💰 Bank Profit Split</div>
+        <div style="display:flex;justify-content:space-between;font-size:12px"><span>Bank value</span><b>${fmt(c._value||0)}</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:12px"><span>Owed to depositors</span><b style="color:var(--red)">${fmt(owed)}</b></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-top:2px"><span>Your profit</span><span style="color:${profit>=0?'var(--green)':'var(--red)'}">${profit>=0?'+':''}${fmt(profit)}</span></div>
+      </div>` : ''}
     </div>`;
+    }
     case 'insurance': return `<div style="margin-bottom:12px">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">Insurance</div>
       ${c._my_policy ? `<div style="color:var(--green);font-size:13px">Covered: ${fmt(c._my_policy.coverage)}</div>`

@@ -3142,11 +3142,17 @@ function buildCandles(h, t) {
   const n = h.length;
   const groupSize = Math.max(1, Math.floor(n / 30));
   const candles = [];
+  let prevClose = h[0];
   for (let i = 0; i < n; i += groupSize) {
     const grp = h.slice(i, i + groupSize);
     if (!grp.length) continue;
-    candles.push({ o: grp[0], c: grp[grp.length - 1], hi: Math.max(...grp), lo: Math.min(...grp),
+    const open = prevClose;                 // open = previous candle's close
+    const close = grp[grp.length - 1];
+    const hi = Math.max(open, ...grp);
+    const lo = Math.min(open, ...grp);
+    candles.push({ o: open, c: close, hi: hi, lo: lo,
                    label: t[Math.min(i + grp.length - 1, t.length - 1)] || '' });
+    prevClose = close;
   }
   return candles;
 }

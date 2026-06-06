@@ -16,6 +16,7 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
     {"date": "Jun 6", "items": [
+        "✨ Fresh modern look — new font, deeper colors, softer cards, and the price now flashes green/red when it moves.",
         "📱 The site is now mobile-friendly — the top buttons collapse into a ☰ menu and tap targets are bigger.",
         "🔴 While the market is closed (12am–12pm CST) the SUS price is frozen, no news happens, and you can't buy/sell/short. Companies, the lottery, the store, and server unlocks still work.",
         "📈 The buy/sell average-cost line now also shows when you trade as a company.",
@@ -2592,34 +2593,64 @@ DASHBOARD_HTML = """
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
 <title>Sus Stock Market</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   :root {
-    --bg: #1e1f22; --surface: #2b2d31; --surface2: #313338;
-    --accent: #5865f2; --green: #57f287; --red: #ed4245;
-    --text: #dbdee1; --muted: #949ba4; --border: #3a3c40;
+    --bg: #0e0f13; --bg2: #15171c;
+    --surface: #1a1c22; --surface2: #22252c; --surface3: #2a2e37;
+    --accent: #6366f1; --accent2: #8b5cf6; --accent-grad: linear-gradient(135deg, #6366f1, #8b5cf6);
+    --green: #34d399; --red: #f87171; --gold: #fbbf24;
+    --text: #e8eaed; --muted: #8b93a1; --border: #2a2e37; --border2: #353a45;
+    /* radius scale */
+    --r-sm: 8px; --r: 12px; --r-lg: 16px; --r-xl: 22px;
+    /* elevation */
+    --sh-sm: 0 1px 2px rgba(0,0,0,.3);
+    --sh: 0 4px 16px rgba(0,0,0,.35);
+    --sh-lg: 0 12px 40px rgba(0,0,0,.45);
+    --ring: 0 0 0 3px rgba(99,102,241,.25);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; min-height: 100vh; }
+  body {
+    color: var(--text); min-height: 100vh;
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(99,102,241,.10), transparent 60%),
+      radial-gradient(900px 500px at -10% 10%, rgba(139,92,246,.08), transparent 55%),
+      var(--bg);
+    background-attachment: fixed;
+  }
+  /* numbers never jitter as they update */
+  .price, .stat-value, .p-stat-value, .lb-worth, .lb-pnl, #timer-countdown, .change-badge { font-variant-numeric: tabular-nums; }
+  /* price flash on change */
+  @keyframes flashUp { 0%{ color: var(--green); text-shadow: 0 0 18px rgba(52,211,153,.6);} 100%{ text-shadow:none; } }
+  @keyframes flashDown { 0%{ color: var(--red); text-shadow: 0 0 18px rgba(248,113,113,.6);} 100%{ text-shadow:none; } }
+  .flash-up { animation: flashUp .8s ease-out; }
+  .flash-down { animation: flashDown .8s ease-out; }
 
-  header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; gap: 12px; }
-  header h1 { font-size: 20px; font-weight: 700; }
-  .tag { background: var(--accent); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+  header { background: rgba(20,22,28,.78); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 90; box-shadow: var(--sh-sm); }
+  header h1 { font-size: 20px; font-weight: 800; letter-spacing: -.3px; background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .tag { background: var(--accent-grad); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .5px; padding: 3px 9px; border-radius: 999px; }
   .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
 
   .auth-area { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-  .btn { padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; border: none; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
-  .btn-discord { background: #5865f2; color: #fff; }
-  .btn-discord:hover { background: #4752c4; }
+  .btn { padding: 8px 16px; border-radius: var(--r-sm); font-size: 13px; font-weight: 600; border: none; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: transform .12s ease, box-shadow .15s ease, background .15s ease, filter .15s ease; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active { transform: translateY(0) scale(.97); }
+  .btn-discord { background: var(--accent-grad); color: #fff; box-shadow: 0 4px 14px rgba(99,102,241,.35); }
+  .btn-discord:hover { filter: brightness(1.08); }
   .btn-logout { background: var(--surface2); color: var(--muted); font-size: 12px; padding: 5px 12px; }
   .btn-logout:hover { color: var(--text); }
-  .btn-buy { background: #57f28722; color: var(--green); border: 1px solid #57f28740; }
-  .btn-buy:hover { background: #57f28740; }
-  .btn-sell { background: #ed424522; color: var(--red); border: 1px solid #ed424540; }
-  .btn-sell:hover { background: #ed424540; }
+  .btn-buy { background: rgba(52,211,153,.14); color: var(--green); border: 1px solid rgba(52,211,153,.32); }
+  .btn-buy:hover { background: rgba(52,211,153,.26); }
+  .btn-sell { background: rgba(248,113,113,.14); color: var(--red); border: 1px solid rgba(248,113,113,.32); }
+  .btn-sell:hover { background: rgba(248,113,113,.26); }
   .avatar { width: 30px; height: 30px; border-radius: 50%; }
 
   .layout { display: grid; grid-template-columns: 260px 1fr 340px; gap: 20px; padding: 20px 28px; max-width: 1600px; margin: 0 auto; }
@@ -2633,11 +2664,11 @@ DASHBOARD_HTML = """
     .layout{ grid-template-columns:1fr; padding: 12px; }
   }
 
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 22px; margin-bottom: 16px; }
+  .card { background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0)) , var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 18px 22px; margin-bottom: 16px; box-shadow: var(--sh); }
   .card-title { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
 
   .price-hero { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
-  .price { font-size: 40px; font-weight: 800; letter-spacing: -1px; }
+  .price { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; }
   .change-badge { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 6px; }
   .change-badge.up { background: #57f28722; color: var(--green); }
   .change-badge.down { background: #ed424522; color: var(--red); }
@@ -2650,18 +2681,18 @@ DASHBOARD_HTML = """
   .range-marker { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); }
 
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-  .stat { background: var(--surface2); border-radius: 8px; padding: 10px 12px; }
+  .stat { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
   .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; }
   .stat-value { font-size: 16px; font-weight: 700; }
 
   /* Portfolio card */
   .portfolio-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px; }
-  .p-stat { background: var(--surface2); border-radius: 8px; padding: 10px 12px; }
+  .p-stat { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; }
   .p-stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; }
   .p-stat-value { font-size: 15px; font-weight: 700; }
   .trade-row { display: flex; gap: 8px; margin-top: 4px; }
-  .trade-input { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 12px; font-size: 14px; width: 100%; outline: none; }
-  .trade-input:focus { border-color: var(--accent); }
+  .trade-input { background: var(--surface2); border: 1px solid var(--border2); color: var(--text); border-radius: var(--r-sm); padding: 9px 12px; font-size: 14px; width: 100%; outline: none; transition: border-color .15s, box-shadow .15s; }
+  .trade-input:focus { border-color: var(--accent); box-shadow: var(--ring); }
   .trade-btns { display: flex; gap: 8px; margin-top: 8px; }
 
   .login-prompt { text-align: center; padding: 24px 0; color: var(--muted); font-size: 14px; }
@@ -2685,9 +2716,9 @@ DASHBOARD_HTML = """
   .toast.err { border-color: var(--red); color: var(--red); }
 
   /* Zoom buttons */
-  .zoom-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 6px; cursor: pointer; }
-  .zoom-btn:hover { border-color: var(--accent); color: var(--text); }
-  .zoom-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .zoom-btn { background: var(--surface2); border: 1px solid var(--border2); color: var(--muted); font-size: 11px; font-weight: 700; padding: 4px 11px; border-radius: 999px; cursor: pointer; transition: all .15s ease; }
+  .zoom-btn:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
+  .zoom-btn.active { background: var(--accent-grad); border-color: transparent; color: #fff; box-shadow: 0 3px 10px rgba(99,102,241,.35); }
 
   /* Chat */
   .chat-msg { display: flex; gap: 8px; align-items: flex-start; }
@@ -2704,7 +2735,9 @@ DASHBOARD_HTML = """
 
   /* Nav buttons (header) */
   .nav-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .nav-buttons > button, .nav-buttons > a { margin-left: 0 !important; display: inline-flex; align-items: center; }
+  .nav-buttons > button, .nav-buttons > a { margin-left: 0 !important; display: inline-flex; align-items: center; transition: transform .12s ease, border-color .15s ease, background .15s ease; }
+  .nav-buttons > button:hover, .nav-buttons > a:hover { transform: translateY(-1px); border-color: var(--accent) !important; }
+  .nav-buttons > button:active, .nav-buttons > a:active { transform: scale(.97); }
   .hamburger { display: none; margin-left: auto; background: var(--surface2); border: 1px solid var(--border); color: var(--text); font-size: 20px; line-height: 1; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
   #nav-backdrop { position: fixed; inset: 0; background: #0007; z-index: 150; opacity: 0; pointer-events: none; transition: opacity .28s ease; }
   #nav-backdrop.open { opacity: 1; pointer-events: auto; }
@@ -3405,7 +3438,16 @@ async function fetchStock() {
   const { price, change, change_pct: pct, history, timestamps } = d;
   const up = change >= 0;
   if (!history) return;
-  document.getElementById('price').textContent = fmt(price);
+  const priceEl = document.getElementById('price');
+  const prevPrice = window._lastPrice;
+  priceEl.textContent = fmt(price);
+  if (prevPrice !== undefined && price !== prevPrice) {
+    const cls = price > prevPrice ? 'flash-up' : 'flash-down';
+    priceEl.classList.remove('flash-up', 'flash-down');
+    void priceEl.offsetWidth;  // restart animation
+    priceEl.classList.add(cls);
+  }
+  window._lastPrice = price;
   const badge = document.getElementById('change-badge');
   badge.textContent = `${up?'+':''}${fmt(change)} (${up?'+':''}${pct}%)`;
   badge.className = 'change-badge ' + (up ? 'up' : 'down');
@@ -4546,12 +4588,14 @@ COMPANIES_HTML = """
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>Sus Stock — Companies</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
-  :root { --bg:#1e1f22;--surface:#2b2d31;--surface2:#313338;--accent:#5865f2;--green:#57f287;--red:#ed4245;--text:#dbdee1;--muted:#949ba4;--border:#3a3c40; }
+  :root { --bg:#0e0f13;--surface:#1a1c22;--surface2:#22252c;--accent:#6366f1;--accent2:#8b5cf6;--accent-grad:linear-gradient(135deg,#6366f1,#8b5cf6);--green:#34d399;--red:#f87171;--text:#e8eaed;--muted:#8b93a1;--border:#2a2e37; }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;min-height:100vh}
+  body{color:var(--text);min-height:100vh;font-family:'Inter','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1200px 600px at 80% -10%,rgba(99,102,241,.10),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(139,92,246,.08),transparent 55%),var(--bg);background-attachment:fixed}
   header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:16px}
   header h1{font-size:20px;font-weight:700}
   .nav-link{color:var(--muted);text-decoration:none;font-size:13px;font-weight:600}
@@ -4979,12 +5023,14 @@ GUIDE_HTML = """
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>Sus Stock — Company Guide</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
-  :root{--bg:#1e1f22;--surface:#2b2d31;--surface2:#313338;--accent:#5865f2;--green:#57f287;--red:#ed4245;--text:#dbdee1;--muted:#949ba4;--border:#3a3c40;}
+  :root{--bg:#0e0f13;--surface:#1a1c22;--surface2:#22252c;--accent:#6366f1;--accent2:#8b5cf6;--accent-grad:linear-gradient(135deg,#6366f1,#8b5cf6);--green:#34d399;--red:#f87171;--text:#e8eaed;--muted:#8b93a1;--border:#2a2e37;}
   *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;line-height:1.6}
+  body{color:var(--text);line-height:1.6;font-family:'Inter','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1200px 600px at 80% -10%,rgba(99,102,241,.10),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(139,92,246,.08),transparent 55%),var(--bg);background-attachment:fixed}
   header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10}
   header h1{font-size:20px;font-weight:700}
   a.nav{color:var(--accent);text-decoration:none;font-size:13px;font-weight:700}

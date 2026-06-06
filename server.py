@@ -3262,6 +3262,14 @@ async function fetchStock() {
       arEl.style.display = 'none';
     }
   }
+  // Live-update open short P&L from the current price
+  const spEl = document.getElementById('short-pnl-live');
+  if (spEl) {
+    const sh = parseFloat(spEl.dataset.shares), entry = parseFloat(spEl.dataset.entry);
+    const pnl = (entry - price) * sh;
+    spEl.textContent = `P&L: ${pnl >= 0 ? '+' : ''}${fmt(pnl)}`;
+    spEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+  }
   fullHistory = history;
   fullTimestamps = timestamps || [];
   renderChart();
@@ -3431,7 +3439,7 @@ async function fetchMe() {
         <div style="background:#ed424518;border:1px solid #ed424540;border-radius:8px;padding:12px;margin-bottom:10px">
           <div style="font-weight:700;color:var(--red);margin-bottom:6px">📉 Open Short Position</div>
           <div style="font-size:13px;color:var(--muted)">${u.short.shares} shares @ ${fmt(u.short.entry_price)}</div>
-          <div style="font-size:15px;font-weight:700;${u.short_pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">P&L: ${u.short_pnl >= 0 ? '+' : ''}${fmt(u.short_pnl)}</div>
+          <div id="short-pnl-live" data-shares="${u.short.shares}" data-entry="${u.short.entry_price}" style="font-size:15px;font-weight:700;${u.short_pnl >= 0 ? 'color:var(--green)' : 'color:var(--red)'}">P&L: ${u.short_pnl >= 0 ? '+' : ''}${fmt(u.short_pnl)}</div>
         </div>
         <button class="btn btn-sell" style="width:100%" onclick="coverShort()">Close Short Position</button>
       ` : `

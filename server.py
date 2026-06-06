@@ -2632,6 +2632,9 @@ DASHBOARD_HTML = """
   @keyframes flashDown { 0%{ color: var(--red); text-shadow: 0 0 18px rgba(248,113,113,.6);} 100%{ text-shadow:none; } }
   .flash-up { animation: flashUp .8s ease-out; }
   .flash-down { animation: flashDown .8s ease-out; }
+  /* skeleton shimmer */
+  .skeleton { color: transparent !important; background: linear-gradient(90deg, var(--surface2) 25%, var(--surface3) 50%, var(--surface2) 75%); background-size: 200% 100%; border-radius: 8px; animation: shimmer 1.2s infinite linear; }
+  @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
   header { background: rgba(20,22,28,.78); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 90; box-shadow: var(--sh-sm); }
   header h1 { font-size: 20px; font-weight: 800; letter-spacing: -.3px; background: var(--accent-grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
@@ -2710,8 +2713,9 @@ DASHBOARD_HTML = """
   .lb-me { background: #5865f215; border-radius: 6px; padding: 0 6px; }
 
   .updated { font-size: 11px; color: var(--muted); margin-top: 8px; }
-  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 99; }
-  .toast.show { opacity: 1; }
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 12px 18px; font-size: 13px; font-weight: 600; opacity: 0; transform: translateY(12px); transition: opacity .25s ease, transform .25s ease; pointer-events: none; z-index: 250; box-shadow: var(--sh-lg); }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  @media(max-width:800px){ .toast { left: 16px; right: 16px; bottom: 16px; text-align: center; } }
   .toast.ok { border-color: var(--green); color: var(--green); }
   .toast.err { border-color: var(--red); color: var(--red); }
 
@@ -2774,9 +2778,11 @@ DASHBOARD_HTML = """
     .btn { padding: 11px 16px; }
     #market-timer { padding: 10px 14px; }
     #timer-countdown { font-size: 22px; }
-    /* Modals behave like full-width sheets */
-    .modal-sheet { width: 96vw !important; max-height: 92vh !important; padding: 18px !important; }
+    /* Modals slide up as full-width bottom sheets */
+    [id$="-modal"] { align-items: flex-end !important; }
+    [id$="-modal"] > div { width: 100% !important; max-width: 100% !important; border-radius: var(--r-xl) var(--r-xl) 0 0 !important; max-height: 90vh !important; animation: sheetUp .3s cubic-bezier(.4,0,.2,1); }
   }
+  @keyframes sheetUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
 </style>
 </head>
 <body>
@@ -2840,7 +2846,7 @@ DASHBOARD_HTML = """
         </div>
       </div>
       <div class="price-hero">
-        <span class="price" id="price">—</span>
+        <span class="price skeleton" id="price">$000.00</span>
         <span class="change-badge" id="change-badge">—</span>
         <span id="analyst-rating" style="display:none;font-size:13px;font-weight:700;padding:4px 10px;border-radius:6px"></span>
       </div>
@@ -3376,14 +3382,19 @@ let chartMode = 'line';
 
 function chartOptions() {
   return {
-    responsive: true, maintainAspectRatio: false, animation: { duration: 250 },
-    plugins: { legend: { display: false }, tooltip: { callbacks: {
-      label: c => { const r = c.raw; return Array.isArray(r) ? fmt(r[1]) : fmt(c.parsed.y); },
-      title: items => items[0].label || ''
+    responsive: true, maintainAspectRatio: false, animation: { duration: 400, easing: 'easeOutQuart' },
+    interaction: { mode: 'index', intersect: false },
+    plugins: { legend: { display: false }, tooltip: {
+      backgroundColor: 'rgba(20,22,28,.95)', borderColor: 'rgba(99,102,241,.4)', borderWidth: 1,
+      titleColor: '#8b93a1', bodyColor: '#e8eaed', titleFont: { size: 11, weight: '600' },
+      bodyFont: { size: 14, weight: '700' }, padding: 10, cornerRadius: 10, displayColors: false,
+      caretSize: 6, callbacks: {
+        label: c => { const r = c.raw; return Array.isArray(r) ? fmt(r[1]) : fmt(c.parsed.y); },
+        title: items => items[0].label || ''
     }}},
     scales: {
-      x: { display: true, stacked: false, ticks: { color: '#949ba4', maxTicksLimit: 6, maxRotation: 0, autoSkip: true, font: { size: 10 } }, grid: { display: false }, border: { display: false } },
-      y: { grid: { color: '#3a3c40' }, ticks: { color: '#949ba4', callback: v => fmt(v) }, border: { display: false } }
+      x: { display: true, stacked: false, ticks: { color: '#8b93a1', maxTicksLimit: 6, maxRotation: 0, autoSkip: true, font: { size: 10 } }, grid: { display: false }, border: { display: false } },
+      y: { grid: { color: 'rgba(255,255,255,.05)' }, ticks: { color: '#8b93a1', callback: v => fmt(v), font: { size: 10 } }, border: { display: false } }
     }
   };
 }
@@ -3439,6 +3450,7 @@ async function fetchStock() {
   const up = change >= 0;
   if (!history) return;
   const priceEl = document.getElementById('price');
+  priceEl.classList.remove('skeleton');
   const prevPrice = window._lastPrice;
   priceEl.textContent = fmt(price);
   if (prevPrice !== undefined && price !== prevPrice) {
@@ -3871,8 +3883,8 @@ function renderChart() {
       { label: 'wick', data: candles.map(c => [c.lo, c.hi]), backgroundColor: '#888',
         barThickness: 2, grouped: false, categoryPercentage: 1, barPercentage: 1 },
       { label: 'body', data: candles.map(c => [Math.min(c.o, c.c), Math.max(c.o, c.c)]),
-        backgroundColor: candles.map(c => c.c >= c.o ? '#57f287' : '#ed4245'),
-        grouped: false, categoryPercentage: 1, barPercentage: 0.7 },
+        backgroundColor: candles.map(c => c.c >= c.o ? '#34d399' : '#f87171'),
+        borderRadius: 2, grouped: false, categoryPercentage: 1, barPercentage: 0.7 },
     ];
     const cl = costLineDataset(candles.length);
     if (cl) chart.data.datasets.push(cl);
@@ -3890,9 +3902,14 @@ function renderChart() {
     chart.options.scales.y.max = undefined;
     const up = h.length < 2 || h[h.length-1] >= h[0];
     chart.data.labels = t.length ? t : h.map((_,i) => i);
-    chart.data.datasets = [{ data: h, borderColor: up ? '#57f287' : '#ed4245',
-      backgroundColor: up ? 'rgba(87,242,135,0.08)' : 'rgba(237,66,69,0.08)',
-      borderWidth: 2, pointRadius: 0, fill: true, tension: 0.3 }];
+    const rgb = up ? '52,211,153' : '248,113,113';
+    const grad = ctx.createLinearGradient(0, 0, 0, (chart.height || 240));
+    grad.addColorStop(0, `rgba(${rgb},0.32)`);
+    grad.addColorStop(0.7, `rgba(${rgb},0.05)`);
+    grad.addColorStop(1, `rgba(${rgb},0)`);
+    chart.data.datasets = [{ data: h, borderColor: up ? '#34d399' : '#f87171',
+      backgroundColor: grad, borderWidth: 2.5, pointRadius: 0, fill: true, tension: 0.35,
+      pointHoverRadius: 5, pointHoverBackgroundColor: '#fff', pointHoverBorderColor: up ? '#34d399' : '#f87171', pointHoverBorderWidth: 2 }];
     const cl = costLineDataset(chart.data.labels.length);
     if (cl) chart.data.datasets.push(cl);
     chart.update();

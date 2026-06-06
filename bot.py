@@ -50,7 +50,7 @@ def add_news_event(data, headline, positive, price_impact_pct, delay_public=True
         "positive": positive,
         "impact": round(price_impact_pct, 2),
         "ts": now,
-        "public_at": now + 120 if delay_public else now,  # 2 min delay for public
+        "public_at": now + 300 if delay_public else now,  # 5 min runway: basic rings see 2 min early, premium up to 5 min
     })
     data["news_feed"] = events[-50:]  # keep last 50
 
@@ -803,6 +803,18 @@ async def process_companies():
                         print(f"[insider_ring] dropped {uid} (can't pay)")
                     changed = True
 
+            # ── Insider ring early-access upkeep: pricier the higher the level ──
+            if ctype == "insider_ring":
+                early = int(c.get("early", 0))
+                if early > 0:
+                    upkeep = early * 1500  # per 20-min cycle
+                    if c.get("treasury", 0) >= upkeep:
+                        c["treasury"] = round(c["treasury"] - upkeep, 2)
+                    else:
+                        c["early"] = early - 1  # can't afford — drop a level
+                        print(f"[insider_ring] {c.get('name')} dropped to early L{early-1} (couldn't pay upkeep)")
+                    changed = True
+
             # ── Index Fund: auto-buy SUS with idle cash ──────────────────────
             if ctype == "index_fund" and c["treasury"] >= sus_price:
                 shares_to_buy = int(c["treasury"] // sus_price)
@@ -974,8 +986,8 @@ async def fluctuate_price():
             crash_pct = round(random.uniform(-45, -30), 2)
             add_news_event(data, "⚡ FLASH CRASH: Sus Corp set to plummet!", False, crash_pct, delay_public=True)
             data.setdefault("pending_earnings", []).append(
-                {"impact_pct": crash_pct, "apply_at": int(time.time()) + 120, "crash": True})
-            print(f"[flash_crash] queued {crash_pct}% in 2min")
+                {"impact_pct": crash_pct, "apply_at": int(time.time()) + 300, "crash": True})
+            print(f"[flash_crash] queued {crash_pct}% in 5min")
         change_pct = random.uniform(-volatility, volatility) + bias
 
         # Fold in any earnings/crash impact that just went public
@@ -1087,11 +1099,11 @@ async def earnings_report():
     add_news_event(data, f"📰 EARNINGS: {headline}", positive, impact_pct, delay_public=True)
     # Queue the price impact to apply when the news goes public (2 min later)
     pending = data.get("pending_earnings", [])
-    pending.append({"impact_pct": impact_pct, "apply_at": now + 120})
+    pending.append({"impact_pct": impact_pct, "apply_at": now + 300})
     data["pending_earnings"] = pending
 
     save_data(data)
-    print(f"[earnings] queued {'📈' if positive else '📉'} {impact_pct:.1f}% (applies in 2min) — {headline}")
+    print(f"[earnings] queued {'📈' if positive else '📉'} {impact_pct:.1f}% (applies in 5min) — {headline}")
 
 
 @earnings_report.before_loop
@@ -1115,7 +1127,7 @@ async def update_bull_bear():
         "cycle": cycle,
         "duration_hours": duration_hours,
         "sentiment": random.randint(65, 90) if cycle == "bull" else (random.randint(10, 35) if cycle == "bear" else random.randint(40, 60)),
-        "apply_at": int(time.time()) + 120,
+        "apply_at": int(time.time()) + 300,
     }
     label = "🐂 Bull Market" if cycle == "bull" else ("🐻 Bear Market" if cycle == "bear" else "😐 Neutral Market")
     add_news_event(data, f"📊 Market Cycle Shift incoming: {label} for next {duration_hours}h", cycle == "bull", 0, delay_public=True)

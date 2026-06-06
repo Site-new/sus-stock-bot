@@ -15,6 +15,12 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
+    {"date": "Jun 6", "items": [
+        "🔍 Insider Rings can now upgrade their lead time (2–5 min before the public). Faster tiers cost upkeep from the treasury every 20 min.",
+        "📈 A Max button was added next to the Buy / Sell / Short boxes.",
+        "📉 Open short positions now update their profit/loss live with the price.",
+        "🐷 CEO deposits into a Savings Bank now count as the bank's own capital, not money owed to depositors.",
+    ]},
     {"date": "Jun 5", "items": [
         "📋 Update log added (you're reading it!) — check here for what's new.",
         "📰 Market news now happens twice as often.",
@@ -311,9 +317,9 @@ def admin_fire_news():
     now = int(time.time())
     events = data.get("news_feed", [])
     events.append({"headline": f"📰 {headline}", "positive": positive, "impact": impact,
-                   "ts": now, "public_at": now + 120})
+                   "ts": now, "public_at": now + 300})
     data["news_feed"] = events[-50:]
-    data.setdefault("pending_earnings", []).append({"impact_pct": impact, "apply_at": now + 120})
+    data.setdefault("pending_earnings", []).append({"impact_pct": impact, "apply_at": now + 300})
     save_data(data)
     return jsonify({"ok": True, "headline": headline, "impact": impact})
 
@@ -454,14 +460,12 @@ def api_stock():
     cycle = data.get("bull_bear", "neutral")
     sentiment = data.get("sentiment", 50)
 
-    # Insider ring members see news immediately; everyone else waits for public_at
-    is_insider = user_in_insider_ring(session.get("user_id"))
+    # Insider rings see news early; higher early-access levels see it sooner.
+    level = user_insider_level(session.get("user_id"))
+    is_insider = level >= 0
     now = int(time.time())
     all_news = data.get("news_feed", [])
-    if is_insider:
-        news = all_news[-10:]
-    else:
-        news = [n for n in all_news if n.get("public_at", n.get("ts", 0)) <= now][-10:]
+    news = [n for n in all_news if insider_reveal_time(n, level) <= now][-10:]
 
     # Merge in this user's personal notifications (e.g. money received)
     if session.get("user_id"):
@@ -1000,6 +1004,34 @@ def user_in_insider_ring(user_id):
     return False
 
 
+def user_insider_level(user_id):
+    """Best insider early-access level for a user across all rings they run/subscribe to.
+    Returns -1 if not in any ring (public), else 0-3. Lead = (2 + level) minutes before price moves."""
+    if not user_id:
+        return -1
+    uid = str(user_id)
+    best = -1
+    try:
+        for c in load_companies().values():
+            if c.get("type") != "insider_ring":
+                continue
+            if c.get("ceo") == uid or uid in c.get("subscribers", {}):
+                best = max(best, int(c.get("early", 0)))
+    except Exception:
+        pass
+    return best
+
+
+def insider_reveal_time(news_item, level):
+    """When a viewer with the given insider level (-1=public) gets to see this news item."""
+    ts = news_item.get("ts", 0)
+    public_at = news_item.get("public_at", ts)
+    if level < 0:
+        return public_at
+    # public_at = ts + 300. level 0 -> see at ts+180 (120s/2min lead); level 3 -> ts (300s/5min lead).
+    return ts + max(0, 180 - 60 * level)
+
+
 def user_analyst_rating(user_id):
     """Return the rating set by the Analyst Firm this user runs/subscribes to (or None)."""
     if not user_id:
@@ -1379,6 +1411,30 @@ def api_company_set_rating(cid):
     c["rating"] = rating
     save_companies(companies)
     return jsonify({"ok": True, "rating": rating})
+
+
+# Upkeep cost per cycle (20 min) for each early-access level above 0.
+EARLY_UPKEEP_PER_LEVEL = 1500
+
+
+@app.route("/api/companies/<cid>/set_early", methods=["POST"])
+def api_company_set_early(cid):
+    """Insider Ring CEO sets the early-access level (0-3). Higher = more lead time but pricier upkeep."""
+    if "user_id" not in session:
+        return jsonify({"error": "not logged in"}), 401
+    companies = load_companies()
+    c = companies.get(cid)
+    if not c or not is_ceo(c, session["user_id"]) or c["type"] != "insider_ring":
+        return jsonify({"error": "CEO of insider ring only"}), 403
+    try:
+        level = int(request.json.get("level", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid level"}), 400
+    if level < 0 or level > 3:
+        return jsonify({"error": "level must be 0-3"}), 400
+    c["early"] = level
+    save_companies(companies)
+    return jsonify({"ok": True, "early": level})
 
 
 def _mkt_level(c):
@@ -4054,18 +4110,26 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
       const subbed = c.subscribers && c.subscribers[myUserId];
       const price = c.sub_price || 0;
       const subCount = c.subscribers ? Object.keys(c.subscribers).length : 0;
+      const early = c.early || 0;
+      const lead = 2 + early; // minutes before the public
       let inner = `<div style="font-size:12px;font-weight:700;margin-bottom:6px">🔍 Insider Ring · ${subCount} subscriber(s)</div>`;
       if (isCeo) {
+        const upkeep = early * 1500;
+        const earlyBtns = [0,1,2,3].map(l => `<button class="zoom-btn" style="${l===early?'background:#5865f2;color:#fff;border-color:#5865f2':''}" onclick="dSetEarly('${cid}',${l})">${2+l} min</button>`).join('');
         inner += `<div style="font-size:11px;color:var(--muted);margin-bottom:4px">You're the owner — you get all news free.</div>
-          <div style="display:flex;gap:6px;align-items:center">
+          <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
             <input type="number" id="d-subprice" class="trade-input" placeholder="$/hour" value="${price}" style="flex:1;margin-bottom:0"/>
             <button class="btn btn-discord" onclick="dSetSubPrice('${cid}')">Set Price</button>
-          </div>`;
+          </div>
+          <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px">⏱️ Lead Time</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">How far ahead of the public your members see news. Faster tiers cost upkeep every 20 min from the treasury.</div>
+          <div style="display:flex;gap:4px;margin-bottom:6px">${earlyBtns}</div>
+          <div style="font-size:12px;color:${early>0?'var(--red)':'var(--muted)'}">Upkeep: <b>${upkeep>0?fmt(upkeep)+' / 20 min':'free'}</b></div>`;
       } else if (subbed) {
-        inner += `<div style="font-size:13px;color:var(--green);margin-bottom:6px">✓ Subscribed — you get news ${'2 min'} early (${fmt(price)}/hr)</div>
+        inner += `<div style="font-size:13px;color:var(--green);margin-bottom:6px">✓ Subscribed — you get news <b>${lead} min</b> early (${fmt(price)}/hr)</div>
           <button class="btn btn-sell" style="width:100%" onclick="dUnsubscribe('${cid}')">Cancel Subscription</button>`;
       } else {
-        inner += `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Subscribe for ${fmt(price)}/hour to get all market news 2 minutes before everyone else.</div>
+        inner += `<div style="font-size:12px;color:var(--muted);margin-bottom:6px">Subscribe for ${fmt(price)}/hour to get all market news <b>${lead} minutes</b> before everyone else.</div>
           <button class="btn btn-discord" style="width:100%" onclick="dSubscribe('${cid}')">Subscribe — ${fmt(price)}/hr</button>`;
       }
       return `<div style="background:var(--surface);border-radius:8px;padding:12px;margin-bottom:12px">${inner}</div>`;
@@ -4165,6 +4229,7 @@ async function dSubscribe(cid) { await dAction(`/api/companies/${cid}/subscribe`
 async function dUnsubscribe(cid) { await dAction(`/api/companies/${cid}/unsubscribe`,{},'Subscription cancelled',cid); }
 async function dSetSubPrice(cid) { const p=parseFloat(document.getElementById('d-subprice')?.value)||0; await dAction(`/api/companies/${cid}/set_sub_price`,{sub_price:p},'Price updated',cid); }
 async function dSetRating(cid, rating) { await dAction(`/api/companies/${cid}/set_rating`,{rating},'Rating set to '+rating,cid); }
+async function dSetEarly(cid, level) { await dAction(`/api/companies/${cid}/set_early`,{level},'Lead time set to '+(2+level)+' min',cid); }
 async function dCopyToggle(cid) { await dAction(`/api/companies/${cid}/copy_toggle`,{},'Auto-copy toggled',cid); }
 async function dSetDescription(cid) { const desc=document.getElementById('d-desc-input')?.value||''; await dAction(`/api/companies/${cid}/set_description`,{description:desc},'Description updated',cid); }
 async function dBuyUpgrade(cid, upgrade) { await dAction(`/api/companies/${cid}/buy_upgrade`,{upgrade},'Upgrade purchased!',cid); }

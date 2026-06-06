@@ -89,6 +89,7 @@ def create_company(founder_id, name, ticker, company_type, description="", sub_p
         "protection_targets": [],  # sus_mafia: [company_id]
         "vote": None,          # day_trading/pump_dump/wolf_pack: current vote
         "pending_news": [],    # insider_ring: queued early news
+        "early": 0,            # insider_ring: early-access level 0-3 (2-5 min lead); higher = pricier upkeep
         "sub_price": round(float(sub_price), 2),  # insider_ring: $/hour subscription
         "subscribers": {},     # insider_ring: {uid: {since: ts}}
         "employees": {},       # {uid: salary_per_cycle}

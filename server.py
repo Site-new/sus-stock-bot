@@ -16,6 +16,7 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
     {"date": "Jun 6", "items": [
+        "🎚️ Trade tabs (Buy/Sell/Short…) now use a sliding segmented switcher, and empty sections show friendly placeholders instead of plain text.",
         "🪄 More polish — glowing dot on the latest price, gold avg-buy line, app icon, safe-area support for notched phones, and the Guide/Companies pages now match the new look.",
         "✨ Fresh modern look — new font, deeper colors, softer cards, and the price now flashes green/red when it moves.",
         "📱 The site is now mobile-friendly — the top buttons collapse into a ☰ menu and tap targets are bigger.",
@@ -2745,6 +2746,19 @@ DASHBOARD_HTML = """
   .zoom-btn:hover { border-color: var(--accent); color: var(--text); transform: translateY(-1px); }
   .zoom-btn.active { background: var(--accent-grad); border-color: transparent; color: #fff; box-shadow: 0 3px 10px rgba(99,102,241,.35); }
 
+  /* Segmented control (trade tabs) */
+  .seg { position: relative; display: flex; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); padding: 4px; margin-bottom: 10px; }
+  .seg-ind { position: absolute; top: 4px; bottom: 4px; left: 4px; width: 0; background: var(--accent-grad); border-radius: var(--r-sm); box-shadow: 0 3px 10px rgba(99,102,241,.35); transition: left .25s cubic-bezier(.4,0,.2,1), width .25s cubic-bezier(.4,0,.2,1); z-index: 0; }
+  .seg-btn { flex: 1; position: relative; z-index: 1; background: transparent; border: none; color: var(--muted); font-size: 13px; font-weight: 700; padding: 8px 4px; border-radius: var(--r-sm); cursor: pointer; transition: color .2s ease; }
+  .seg-btn.active { color: #fff; }
+  .seg-btn:hover:not(.active) { color: var(--text); }
+
+  /* Empty states */
+  .empty { text-align: center; padding: 28px 14px; color: var(--muted); }
+  .empty .e-icon { font-size: 34px; display: block; margin-bottom: 10px; opacity: .85; }
+  .empty .e-title { font-weight: 700; color: var(--text); font-size: 14px; margin-bottom: 4px; }
+  .empty .e-sub { font-size: 12px; line-height: 1.5; }
+
   /* Chat */
   .chat-msg { display: flex; gap: 8px; align-items: flex-start; }
   .chat-avatar { width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0; background: var(--border); }
@@ -2858,7 +2872,7 @@ DASHBOARD_HTML = """
   <div class="news-col">
     <div class="card news-card">
       <div class="card-title" id="news-title">📰 Market News</div>
-      <div id="news-feed"><div style="color:var(--muted);font-size:13px">No events yet — check back soon.</div></div>
+      <div id="news-feed"><div class="empty"><span class="e-icon">📭</span><div class="e-title">All quiet on the markets</div><div class="e-sub">Breaking news and earnings will show up here.</div></div></div>
     </div>
   </div>
 
@@ -2920,7 +2934,7 @@ DASHBOARD_HTML = """
     <!-- Chat -->
     <div class="card" id="chat-card">
       <div class="card-title">💬 Live Chat</div>
-      <div id="chat-messages" style="height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;scroll-behavior:smooth"></div>
+      <div id="chat-messages" style="height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;scroll-behavior:smooth"><div class="empty" id="chat-empty" style="margin:auto"><span class="e-icon">💬</span><div class="e-title">No messages yet</div><div class="e-sub">Be the first to say something!</div></div></div>
       <div id="chat-input-area" style="display:flex;gap:8px">
         <input id="chat-input" class="trade-input" placeholder="Say something..." style="flex:1;font-size:13px;padding:7px 10px" onkeydown="if(event.key==='Enter')sendChat()" maxlength="300"/>
         <button class="btn btn-discord" style="padding:7px 14px;font-size:13px" onclick="sendChat()">Send</button>
@@ -3591,6 +3605,9 @@ async function fetchStock() {
         </div>`;
       }).join('');
     }
+  } else {
+    const feed = document.getElementById('news-feed');
+    if (feed) feed.innerHTML = '<div class="empty"><span class="e-icon">📭</span><div class="e-title">All quiet on the markets</div><div class="e-sub">Breaking news and earnings will show up here.</div></div>';
   }
   document.getElementById('range-marker').style.left = ((price - 5) / 495 * 100) + '%';
   document.getElementById('range-label').textContent = fmt(price);
@@ -3683,8 +3700,9 @@ async function fetchMe() {
       <div class="p-stat" style="grid-column:span 2"><div class="p-stat-label">Invested Value</div><div class="p-stat-value" id="my-invested">${fmt(u.invested)}</div></div>
     </div>
     <!-- Trading tabs -->
-    <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">
-      ${(u.acting_as ? ['Buy','Sell','Short'] : (u.verified ? ['Buy','Sell','Short','Limits','Send'] : ['Buy','Sell','Short','Limits'])).map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="zoom-btn ${t==='Buy'?'active':''}" style="flex:1">${t}</button>`).join('')}
+    <div class="seg" id="trade-seg">
+      <div class="seg-ind" id="seg-ind"></div>
+      ${(u.acting_as ? ['Buy','Sell','Short'] : (u.verified ? ['Buy','Sell','Short','Limits','Send'] : ['Buy','Sell','Short','Limits'])).map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="seg-btn ${t==='Buy'?'active':''}">${t}</button>`).join('')}
     </div>
     ${u.verified ? '<div style="font-size:10px;color:var(--green);font-weight:700;margin-bottom:8px">✓ VERIFIED ACCOUNT</div>' : ''}
     ${(!u.acting_as && u.credit_tier) ? `<div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:8px;padding:8px 12px;margin-bottom:10px">
@@ -3775,7 +3793,18 @@ function setTab(tab) {
     if (el) el.style.display = t === tab ? 'block' : 'none';
     if (btn) btn.classList.toggle('active', t === tab);
   });
+  positionSegIndicator();
 }
+function positionSegIndicator() {
+  const seg = document.getElementById('trade-seg');
+  const ind = document.getElementById('seg-ind');
+  if (!seg || !ind) return;
+  const active = seg.querySelector('.seg-btn.active');
+  if (!active) { ind.style.width = '0'; return; }
+  ind.style.left = active.offsetLeft + 'px';
+  ind.style.width = active.offsetWidth + 'px';
+}
+window.addEventListener('resize', positionSegIndicator);
 
 async function loadRecipients() {
   const sel = document.getElementById('send-recipient');
@@ -3968,6 +3997,8 @@ function tsToTime(ts) {
 
 function appendMessage(m, scroll=true) {
   const el = document.getElementById('chat-messages');
+  const emptyEl = document.getElementById('chat-empty');
+  if (emptyEl) emptyEl.remove();
   const isMe = m.user_id === myUserId;
   const avatarUrl = m.avatar
     ? `https://cdn.discordapp.com/avatars/${m.user_id}/${m.avatar}.png?size=32`
@@ -4037,7 +4068,7 @@ const HIST_ICONS = {buy:'📈',sell:'📉',short:'🐻',cover:'🔄',company_buy
 async function loadHistory() {
   const list = document.getElementById('history-list');
   const hist = await fetch('/api/history').then(r => r.ok ? r.json() : []).catch(() => []);
-  if (!hist.length) { list.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px 0">No transactions yet.</div>'; return; }
+  if (!hist.length) { list.innerHTML = '<div class="empty"><span class="e-icon">📜</span><div class="e-title">No transactions yet</div><div class="e-sub">Make your first trade and it\\'ll show up here.</div></div>'; return; }
   list.innerHTML = hist.map(h => {
     const t = new Date(h.ts * 1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
     const amtColor = h.amount > 0 ? 'var(--green)' : (h.amount < 0 ? 'var(--red)' : 'var(--muted)');
@@ -4079,7 +4110,7 @@ async function loadDrawerCompanies() {
   drawerCompanies = await fetch('/api/companies').then(r => r.json()).catch(() => []);
   const el = document.getElementById('drawer-companies-list');
   if (!drawerCompanies.length) {
-    el.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:20px 0">No companies yet. Be the first!</div>';
+    el.innerHTML = '<div class="empty"><span class="e-icon">🏢</span><div class="e-title">No companies yet</div><div class="e-sub">Found one for $2,000 and become a CEO.</div></div>';
     return;
   }
   el.innerHTML = drawerCompanies.map(c => {

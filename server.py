@@ -16,6 +16,8 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
     {"date": "Jun 6", "items": [
+        "🔴 While the market is closed (12am–12pm CST) the SUS price is frozen, no news happens, and you can't buy/sell/short. Companies, the lottery, the store, and server unlocks still work.",
+        "📈 The buy/sell average-cost line now also shows when you trade as a company.",
         "🔍 Insider Rings can now upgrade their lead time (2–5 min before the public). Faster tiers cost upkeep from the treasury every 20 min.",
         "📈 A Max button was added next to the Buy / Sell / Short boxes.",
         "📉 Open short positions now update their profit/loss live with the price.",
@@ -160,6 +162,13 @@ def block_banned_users():
 
 def fmt(amount):
     return f"${amount:,.2f}"
+
+
+def is_market_open():
+    """Market is open noon–midnight CST. While closed, the price is frozen and no trading."""
+    import datetime as dt
+    cst = dt.timezone(dt.timedelta(hours=-6))
+    return dt.datetime.now(cst).hour >= 12
 
 
 # ── Auth routes ────────────────────────────────────────────────────────────────
@@ -453,10 +462,7 @@ def api_stock():
     change = round(price - prev, 2)
     pct = round((change / prev * 100) if prev else 0, 2)
     timestamps = data.get("price_timestamps", [])[-100:]
-    import datetime as dt
-    cst = dt.timezone(dt.timedelta(hours=-6))
-    hour = dt.datetime.now(cst).hour
-    market_open = hour >= 12
+    market_open = is_market_open()
     cycle = data.get("bull_bear", "neutral")
     sentiment = data.get("sentiment", 50)
 
@@ -607,6 +613,8 @@ def api_me():
 def api_buy():
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
+    if not is_market_open():
+        return jsonify({"error": "Market is closed (open 12pm–12am CST). You can't trade SUS right now."}), 400
     shares = int(request.json.get("shares", 0))
     if shares <= 0:
         return jsonify({"error": "invalid amount"}), 400
@@ -645,6 +653,8 @@ def api_buy():
 def api_sell():
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
+    if not is_market_open():
+        return jsonify({"error": "Market is closed (open 12pm–12am CST). You can't trade SUS right now."}), 400
     shares = int(request.json.get("shares", 0))
     if shares <= 0:
         return jsonify({"error": "invalid amount"}), 400
@@ -680,6 +690,8 @@ def api_sell():
 def api_short():
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
+    if not is_market_open():
+        return jsonify({"error": "Market is closed (open 12pm–12am CST). You can't trade SUS right now."}), 400
     shares = int(request.json.get("shares", 0))
     if shares <= 0:
         return jsonify({"error": "invalid amount"}), 400
@@ -707,6 +719,8 @@ def api_short():
 def api_cover():
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
+    if not is_market_open():
+        return jsonify({"error": "Market is closed (open 12pm–12am CST). You can't trade SUS right now."}), 400
     data = load_data()
     uid = session["user_id"]
     price = data["stock_price"]
@@ -3342,6 +3356,18 @@ async function fetchStock() {
     mb.textContent = d.market_open ? '🟢 OPEN' : '🔴 CLOSED';
     mb.style.background = d.market_open ? '#57f28722' : '#ed424522';
     mb.style.color = d.market_open ? 'var(--green)' : 'var(--red)';
+  }
+  // Disable the SUS trade buttons while the market is closed
+  if (d.market_open !== undefined) {
+    document.querySelectorAll('.btn-buy, .btn-sell').forEach(b => {
+      const isTradeBtn = /trade\(|openShort\(|coverShort\(|placeLimit\(/.test(b.getAttribute('onclick') || '');
+      if (isTradeBtn) {
+        b.disabled = !d.market_open;
+        b.style.opacity = d.market_open ? '' : '0.5';
+        b.style.cursor = d.market_open ? '' : 'not-allowed';
+        if (!d.market_open) b.title = 'Market closed (opens 12pm CST)';
+      }
+    });
   }
   // News ticker (top bar) + full news feed
   const nowSec = Math.floor(Date.now() / 1000);

@@ -1114,6 +1114,8 @@ async def before_earnings():
 @tasks.loop(minutes=15)
 async def update_bull_bear():
     """Queue a market cycle shift; takes effect 2 min later (insider warning)."""
+    if not is_market_open():
+        return  # no news while the market is closed
     data = load_data()
     expires = data.get("bull_bear_expires", 0)
     if time.time() < expires:

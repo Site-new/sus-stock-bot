@@ -2664,7 +2664,18 @@ DASHBOARD_HTML = """
     .news-card{ height: auto; max-height: 380px; position: static; }
   }
   @media(max-width:800px){
-    .layout{ grid-template-columns:1fr; padding: 12px; }
+    /* Dissolve the column wrappers so every card stacks in one flow we can order */
+    .layout{ display: flex; flex-direction: column; padding: 12px; gap: 0; }
+    .layout > div{ display: contents; }
+    .card{ margin-bottom: 12px; }
+    /* Mobile order: graph → portfolio → news → leaderboard → chat → everything else */
+    #news-ticker   { order: 0; }
+    #admin-toggle, #admin-area { order: 1; }
+    #chart-card    { order: 2; }
+    #portfolio-card{ order: 3; }
+    .news-card     { order: 4; }
+    #lb-card       { order: 5; }
+    #chat-card     { order: 6; }
   }
 
   .card { background: linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0)) , var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 18px 22px; margin-bottom: 16px; box-shadow: var(--sh); }
@@ -2848,7 +2859,7 @@ DASHBOARD_HTML = """
       📰 Loading news...
     </div>
 
-    <div class="card">
+    <div class="card" id="chart-card">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <div class="card-title" style="margin-bottom:0">SUS / USD</div>
         <span id="market-badge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:#57f28722;color:var(--green)">🟢 OPEN</span>
@@ -2897,7 +2908,7 @@ DASHBOARD_HTML = """
     </div>
 
     <!-- Chat -->
-    <div class="card">
+    <div class="card" id="chat-card">
       <div class="card-title">💬 Live Chat</div>
       <div id="chat-messages" style="height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;margin-bottom:12px;scroll-behavior:smooth"></div>
       <div id="chat-input-area" style="display:flex;gap:8px">
@@ -2936,7 +2947,7 @@ DASHBOARD_HTML = """
     </div>
 
     <!-- Leaderboard -->
-    <div class="card">
+    <div class="card" id="lb-card">
       <div class="card-title">🏆 Leaderboard</div>
       <div id="leaderboard">
         <div class="lb-skel" style="height:38px;margin:6px 0;border-radius:8px"></div>

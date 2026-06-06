@@ -2628,6 +2628,7 @@ DASHBOARD_HTML = """
     --ring: 0 0 0 3px rgba(99,102,241,.25);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  button, input, select, textarea { font-family: inherit; }
   body {
     color: var(--text); min-height: 100vh;
     font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
@@ -4690,6 +4691,7 @@ COMPANIES_HTML = """
 <style>
   :root { --bg:#0e0f13;--surface:#1a1c22;--surface2:#22252c;--accent:#6366f1;--accent2:#8b5cf6;--accent-grad:linear-gradient(135deg,#6366f1,#8b5cf6);--green:#34d399;--red:#f87171;--text:#e8eaed;--muted:#8b93a1;--border:#2a2e37; }
   *{box-sizing:border-box;margin:0;padding:0}
+  button,input,select,textarea{font-family:inherit}
   body{color:var(--text);min-height:100vh;font-family:'Inter','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1200px 600px at 80% -10%,rgba(99,102,241,.10),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(139,92,246,.08),transparent 55%),var(--bg);background-attachment:fixed}
   header{background:rgba(20,22,28,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:90;box-shadow:0 1px 2px rgba(0,0,0,.3)}
   header h1{font-size:20px;font-weight:800;letter-spacing:-.3px;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
@@ -5128,6 +5130,7 @@ GUIDE_HTML = """
 <style>
   :root{--bg:#0e0f13;--surface:#1a1c22;--surface2:#22252c;--accent:#6366f1;--accent2:#8b5cf6;--accent-grad:linear-gradient(135deg,#6366f1,#8b5cf6);--green:#34d399;--red:#f87171;--text:#e8eaed;--muted:#8b93a1;--border:#2a2e37;}
   *{box-sizing:border-box;margin:0;padding:0}
+  button,input,select,textarea{font-family:inherit}
   body{color:var(--text);line-height:1.6;font-family:'Inter','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1200px 600px at 80% -10%,rgba(99,102,241,.10),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(139,92,246,.08),transparent 55%),var(--bg);background-attachment:fixed}
   header{background:rgba(20,22,28,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10;box-shadow:0 1px 2px rgba(0,0,0,.3)}
   header h1{font-size:20px;font-weight:800;letter-spacing:-.3px;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}

@@ -16,6 +16,7 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
     {"date": "Jun 6", "items": [
+        "🕗 Market hours are now 8am–midnight Houston time. While closed, the trade buttons simply gray out (the big CLOSED banner is gone).",
         "🎚️ Trade tabs (Buy/Sell/Short…) now use a sliding segmented switcher, and empty sections show friendly placeholders instead of plain text.",
         "🪄 More polish — glowing dot on the latest price, gold avg-buy line, app icon, safe-area support for notched phones, and the Guide/Companies pages now match the new look.",
         "✨ Fresh modern look — new font, deeper colors, softer cards, and the price now flashes green/red when it moves.",
@@ -169,10 +170,18 @@ def fmt(amount):
 
 
 def is_market_open():
-    """Market is open noon–midnight CST. While closed, the price is frozen and no trading."""
+    """Market is open 8am–midnight Houston time. While closed, the price is frozen and no trading."""
+    return houston_hour() >= 8
+
+
+def houston_hour():
+    """Current hour (0-23) in Houston/Central time, DST-aware."""
     import datetime as dt
-    cst = dt.timezone(dt.timedelta(hours=-6))
-    return dt.datetime.now(cst).hour >= 12
+    try:
+        from zoneinfo import ZoneInfo
+        return dt.datetime.now(ZoneInfo("America/Chicago")).hour
+    except Exception:
+        return dt.datetime.now(dt.timezone(dt.timedelta(hours=-6))).hour
 
 
 # ── Auth routes ────────────────────────────────────────────────────────────────
@@ -618,7 +627,7 @@ def api_buy():
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
     if not is_market_open():
-        return jsonify({"error": "Market is closed (open 12pm–12am CST). You can't trade SUS right now."}), 400
+        return jsonify({"error": "Market is closed (open 8am–12am Houston time). You can't trade SUS right now."}), 400
     shares = int(request.json.get("shares", 0))
     if shares <= 0:
         return jsonify({"error": "invalid amount"}), 400
@@ -658,7 +667,7 @@ def api_sell():
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
     if not is_market_open():
-        return jsonify({"error": "Market is closed (open 12pm–12am CST). You can't trade SUS right now."}), 400
+        return jsonify({"error": "Market is closed (open 8am–12am Houston time). You can't trade SUS right now."}), 400
     shares = int(request.json.get("shares", 0))
     if shares <= 0:
         return jsonify({"error": "invalid amount"}), 400
@@ -695,7 +704,7 @@ def api_short():
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
     if not is_market_open():
-        return jsonify({"error": "Market is closed (open 12pm–12am CST). You can't trade SUS right now."}), 400
+        return jsonify({"error": "Market is closed (open 8am–12am Houston time). You can't trade SUS right now."}), 400
     shares = int(request.json.get("shares", 0))
     if shares <= 0:
         return jsonify({"error": "invalid amount"}), 400
@@ -724,7 +733,7 @@ def api_cover():
     if "user_id" not in session:
         return jsonify({"error": "not logged in"}), 401
     if not is_market_open():
-        return jsonify({"error": "Market is closed (open 12pm–12am CST). You can't trade SUS right now."}), 400
+        return jsonify({"error": "Market is closed (open 8am–12am Houston time). You can't trade SUS right now."}), 400
     data = load_data()
     uid = session["user_id"]
     price = data["stock_price"]
@@ -2890,13 +2899,6 @@ DASHBOARD_HTML = """
         <div class="card-title" style="margin-bottom:0">SUS / USD</div>
         <span id="market-badge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px;background:#57f28722;color:var(--green)">🟢 OPEN</span>
       </div>
-      <div id="closed-banner" style="display:none;background:#ed424522;border:1px solid #ed424566;border-radius:10px;padding:12px 14px;margin-bottom:12px;display:none;align-items:center;gap:12px">
-        <span style="font-size:26px">🔴</span>
-        <div style="flex:1">
-          <div style="font-size:15px;font-weight:800;color:var(--red)">MARKET CLOSED</div>
-          <div style="font-size:12px;color:var(--muted)">Price is frozen — no trading until the bell. Opens <b>12:00pm CST</b> · <span id="closed-countdown">—</span></div>
-        </div>
-      </div>
       <div class="price-hero">
         <span class="price skeleton" id="price">$000.00</span>
         <span class="change-badge" id="change-badge">—</span>
@@ -2913,9 +2915,6 @@ DASHBOARD_HTML = """
       </div>
       <div class="chart-wrap" style="position:relative">
         <canvas id="priceChart"></canvas>
-        <div id="chart-closed-overlay" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;pointer-events:none">
-          <span style="font-size:clamp(22px,6vw,46px);font-weight:900;letter-spacing:4px;color:#ed424533;border:3px solid #ed424533;padding:6px 22px;border-radius:12px;transform:rotate(-8deg)">CLOSED</span>
-        </div>
       </div>
       <div class="range-bar-wrap">
         <div class="range-labels"><span>Min $5.00</span><span id="range-label">—</span><span>Max $500.00</span></div>
@@ -3127,18 +3126,18 @@ DASHBOARD_HTML = """
 const fmt = v => '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
 const medals = ['🥇','🥈','🥉'];
 
-// ── Market open/close countdown (open 12pm–12am CST = UTC-6) ─────────────────────
+// ── Market open/close countdown (open 8am–midnight Houston/Central time, DST-aware) ──
+function houstonNow() {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour12: false,
+    hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(new Date());
+  const get = t => parseInt(parts.find(p => p.type === t).value, 10);
+  let h = get('hour'); if (h === 24) h = 0;
+  return { h, m: get('minute'), s: get('second') };
+}
 function updateMarketTimer() {
-  const nowUtc = new Date();
-  // CST = UTC-6
-  const cstMs = nowUtc.getTime() - 6 * 3600 * 1000;
-  const cst = new Date(cstMs);
-  const h = cst.getUTCHours(), m = cst.getUTCMinutes(), s = cst.getUTCSeconds();
-  const isOpen = h >= 12; // open noon to midnight
-  // Seconds until next boundary
-  let target; // hour boundary in CST
-  if (isOpen) target = 24;   // closes at midnight (24:00)
-  else target = 12;          // opens at noon
+  const { h, m, s } = houstonNow();
+  const isOpen = h >= 8; // open 8am to midnight
+  const target = isOpen ? 24 : 8;   // closes at midnight (24:00), opens at 8am
   const secsNow = h * 3600 + m * 60 + s;
   let remain = target * 3600 - secsNow;
   if (remain < 0) remain += 24 * 3600;
@@ -3491,19 +3490,6 @@ function buildCandles(h, t) {
   return candles;
 }
 
-function updateClosedCountdown() {
-  const el = document.getElementById('closed-countdown');
-  if (!el) return;
-  // Current time in CST (UTC-6), read via UTC fields
-  const cst = new Date(Date.now() - 6 * 3600000);
-  const secsNow = cst.getUTCHours() * 3600 + cst.getUTCMinutes() * 60 + cst.getUTCSeconds();
-  let diff = 12 * 3600 - secsNow;        // seconds until noon CST
-  if (diff <= 0) diff += 24 * 3600;
-  const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60), s = diff % 60;
-  el.textContent = `opens in ${h}h ${m}m ${s}s`;
-}
-setInterval(() => { const b = document.getElementById('closed-banner'); if (b && b.style.display !== 'none') updateClosedCountdown(); }, 1000);
-
 async function fetchStock() {
   const d = await fetch('/api/stock').then(r => r.json());
   const { price, change, change_pct: pct, history, timestamps } = d;
@@ -3557,22 +3543,16 @@ async function fetchStock() {
     mb.style.color = d.market_open ? 'var(--green)' : 'var(--red)';
   }
   // Big closed banner + chart watermark + countdown to open
+  // Gray out & disable the SUS trade controls while the market is closed
   if (d.market_open !== undefined) {
-    const banner = document.getElementById('closed-banner');
-    const overlay = document.getElementById('chart-closed-overlay');
-    if (banner) banner.style.display = d.market_open ? 'none' : 'flex';
-    if (overlay) overlay.style.display = d.market_open ? 'none' : 'flex';
-    if (!d.market_open) updateClosedCountdown();
-  }
-  // Disable the SUS trade buttons while the market is closed
-  if (d.market_open !== undefined) {
-    document.querySelectorAll('.btn-buy, .btn-sell').forEach(b => {
-      const isTradeBtn = /trade\\(|openShort\\(|coverShort\\(|placeLimit\\(/.test(b.getAttribute('onclick') || '');
-      if (isTradeBtn) {
+    document.querySelectorAll('.btn-buy, .btn-sell, .trade-input').forEach(b => {
+      const oc = b.getAttribute('onclick') || '';
+      const isTradeCtl = b.classList.contains('trade-input') || /trade\\(|openShort\\(|coverShort\\(|placeLimit\\(/.test(oc);
+      if (isTradeCtl) {
         b.disabled = !d.market_open;
-        b.style.opacity = d.market_open ? '' : '0.5';
+        b.style.opacity = d.market_open ? '' : '0.45';
         b.style.cursor = d.market_open ? '' : 'not-allowed';
-        if (!d.market_open) b.title = 'Market closed (opens 12pm CST)';
+        b.title = d.market_open ? '' : 'Market closed (opens 8am Houston time)';
       }
     });
   }

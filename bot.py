@@ -36,9 +36,17 @@ BASE_PRICE = 50.0
 
 CST = timezone(timedelta(hours=-6))
 
+def _houston_hour():
+    """Current hour (0-23) in Houston/Central time, DST-aware."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/Chicago")).hour
+    except Exception:
+        return datetime.now(CST).hour
+
 def is_market_open():
-    """Open 12pm–12am CST."""
-    return datetime.now(CST).hour >= 12
+    """Open 8am–12am Houston time."""
+    return _houston_hour() >= 8
 
 def add_news_event(data, headline, positive, price_impact_pct, delay_public=True):
     """Append an event to the news feed stored in data.json.
@@ -575,7 +583,7 @@ async def slash_market(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Use this in **#sus-stock**.", ephemeral=True)
         return
     data = load_data()
-    open_status = "🟢 OPEN" if is_market_open() else "🔴 CLOSED (opens 12pm CST)"
+    open_status = "🟢 OPEN" if is_market_open() else "🔴 CLOSED (opens 8am Houston time)"
     cycle = data.get("bull_bear", "neutral")
     cycle_label = "🐂 Bull" if cycle == "bull" else ("🐻 Bear" if cycle == "bear" else "😐 Neutral")
     sentiment = data.get("sentiment", 50)

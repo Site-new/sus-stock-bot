@@ -13,6 +13,29 @@ CHAT_FILE = DATA_FILE.replace("data.json", "chat.json")
 STARTING_BALANCE = 1000.0
 TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains money)
 
+# Newest entries first. Keep these short and player-friendly.
+CHANGELOG = [
+    {"date": "Jun 5", "items": [
+        "📋 Update log added (you're reading it!) — check here for what's new.",
+        "📰 Market news now happens twice as often.",
+        "🐷 Savings Banks show owners a live profit split (bank value vs. owed to depositors).",
+        "📈 The chart now draws a yellow dashed line at your average buy price.",
+        "💸 Trading fee lowered from 3% to 1%.",
+    ]},
+    {"date": "Jun 4", "items": [
+        "🔁 New Copy Trading company — subscribe and auto-mirror the company's SUS trades.",
+        "📋 New Analyst Firm company — sell Buy/Hold/Sell ratings to subscribers.",
+        "🕯️ Candlestick chart toggle added next to the zoom buttons.",
+        "🎰 Casino now has 5 games (Coin Flip, High Card, Dice, Roulette, Slots).",
+        "🔓 Server Unlocks — pool money to unlock the Nether ($100k) and End ($10M).",
+    ]},
+]
+
+
+@app.route("/api/changelog")
+def api_changelog():
+    return jsonify(CHANGELOG)
+
 DISCORD_CLIENT_ID     = os.environ.get("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI  = os.environ.get("DISCORD_REDIRECT_URI", "http://localhost:5000/callback")
@@ -2610,6 +2633,7 @@ DASHBOARD_HTML = """
   <div class="live-dot"></div>
   <button id="linkmc-btn" onclick="openLinkMC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🟩 Link MC</button>
   <a href="/guide" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px;text-decoration:none">📖 Guide</a>
+  <button onclick="openUpdates()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🆕 Updates</button>
   <button onclick="openStore()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🛒 Store</button>
   <button onclick="openUnlocks()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🔓 Server Unlocks</button>
   <button onclick="openLottery()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:5px 14px;border-radius:8px;cursor:pointer;margin-left:8px">🎟️ Lottery</button>
@@ -2814,6 +2838,17 @@ DASHBOARD_HTML = """
   </div>
 </div>
 
+<!-- Updates modal -->
+<div id="updates-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <span style="font-size:17px;font-weight:700">🆕 What's New</span>
+      <button onclick="closeUpdates()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer">✕</button>
+    </div>
+    <div id="updates-body">Loading...</div>
+  </div>
+</div>
+
 <!-- Lottery modal -->
 <div id="lottery-modal" style="position:fixed;inset:0;background:#0008;z-index:95;display:none;align-items:center;justify-content:center">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:26px;width:420px;max-width:95vw;text-align:center">
@@ -2894,6 +2929,18 @@ function updateMarketTimer() {
 }
 updateMarketTimer();
 setInterval(updateMarketTimer, 1000);
+
+// ── Updates / changelog ────────────────────────────────────────────────────────
+async function openUpdates() {
+  document.getElementById('updates-modal').style.display = 'flex';
+  const log = await fetch('/api/changelog').then(r => r.ok ? r.json() : []).catch(() => []);
+  document.getElementById('updates-body').innerHTML = log.map(e => `
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">${e.date}</div>
+      ${e.items.map(i => `<div style="font-size:13px;padding:3px 0;color:var(--text)">${i}</div>`).join('')}
+    </div>`).join('') || '<div style="color:var(--muted)">No updates yet.</div>';
+}
+function closeUpdates() { document.getElementById('updates-modal').style.display = 'none'; }
 
 // ── Lottery ──────────────────────────────────────────────────────────────────────
 let lotteryTimer = null;

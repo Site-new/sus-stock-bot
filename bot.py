@@ -1071,7 +1071,7 @@ async def before_fluctuate():
     await bot.wait_until_ready()
 
 
-@tasks.loop(minutes=20)
+@tasks.loop(minutes=10)
 async def earnings_report():
     """Queue an earnings report. The price impact is delayed 2 minutes so
     Insider Trading Ring members can act on the headline before it hits."""
@@ -1099,7 +1099,7 @@ async def before_earnings():
     await bot.wait_until_ready()
 
 
-@tasks.loop(minutes=30)
+@tasks.loop(minutes=15)
 async def update_bull_bear():
     """Queue a market cycle shift; takes effect 2 min later (insider warning)."""
     data = load_data()

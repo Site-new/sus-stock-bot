@@ -2810,6 +2810,8 @@ DASHBOARD_HTML = """
       transform: translateX(-100%); transition: transform .28s cubic-bezier(.4,0,.2,1);
     }
     .nav-buttons.open { transform: translateX(0); }
+    /* While the menu is open, lift the header (and its drawer) above the backdrop so taps land */
+    body.nav-open header { z-index: 160; }
     .nav-buttons > button, .nav-buttons > a {
       width: 100%; justify-content: flex-start;
       padding: 14px 16px !important; font-size: 15px !important; border-radius: 10px;
@@ -3169,10 +3171,12 @@ function toggleNav() {
   const b = document.getElementById('nav-backdrop');
   const open = n ? n.classList.toggle('open') : false;
   if (b) b.classList.toggle('open', open);
+  document.body.classList.toggle('nav-open', open);
 }
 function closeNav() {
   document.getElementById('nav-buttons')?.classList.remove('open');
   document.getElementById('nav-backdrop')?.classList.remove('open');
+  document.body.classList.remove('nav-open');
 }
 
 // ── Updates / changelog ────────────────────────────────────────────────────────

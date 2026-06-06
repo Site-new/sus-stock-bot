@@ -2633,7 +2633,7 @@ DASHBOARD_HTML = """
   .flash-up { animation: flashUp .8s ease-out; }
   .flash-down { animation: flashDown .8s ease-out; }
   /* skeleton shimmer */
-  .skeleton { color: transparent !important; background: linear-gradient(90deg, var(--surface2) 25%, var(--surface3) 50%, var(--surface2) 75%); background-size: 200% 100%; border-radius: 8px; animation: shimmer 1.2s infinite linear; }
+  .skeleton, .lb-skel { color: transparent !important; background: linear-gradient(90deg, var(--surface2) 25%, var(--surface3) 50%, var(--surface2) 75%); background-size: 200% 100%; border-radius: 8px; animation: shimmer 1.2s infinite linear; }
   @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
   header { background: rgba(20,22,28,.78); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--border); padding: 14px 28px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 90; box-shadow: var(--sh-sm); }
@@ -2672,9 +2672,9 @@ DASHBOARD_HTML = """
 
   .price-hero { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
   .price { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; }
-  .change-badge { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 6px; }
-  .change-badge.up { background: #57f28722; color: var(--green); }
-  .change-badge.down { background: #ed424522; color: var(--red); }
+  .change-badge { font-size: 13px; font-weight: 700; padding: 4px 11px; border-radius: 999px; }
+  .change-badge.up { background: rgba(52,211,153,.14); color: var(--green); }
+  .change-badge.down { background: rgba(248,113,113,.14); color: var(--red); }
   .chart-wrap { position: relative; height: 240px; }
 
   .range-bar-wrap { margin-top: 12px; }
@@ -2736,6 +2736,21 @@ DASHBOARD_HTML = """
   .chat-msg.me .chat-name { text-align: right; color: var(--green); }
   #chat-messages::-webkit-scrollbar { width: 4px; }
   #chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Global custom scrollbars */
+  * { scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+  *::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+  *::-webkit-scrollbar-track { background: transparent; }
+
+  /* Card hover lift (skip the tall sticky news card) */
+  .card:not(.news-card) { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+  .card:not(.news-card):hover { transform: translateY(-2px); box-shadow: var(--sh-lg); border-color: var(--border2); }
+
+  /* Leaderboard row hover */
+  .lb-row { border-radius: var(--r-sm); transition: background .15s ease; padding-left: 6px; padding-right: 6px; }
+  .lb-row:hover { background: rgba(255,255,255,.03); }
 
   /* Nav buttons (header) */
   .nav-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -2812,9 +2827,9 @@ DASHBOARD_HTML = """
 </header>
 <div id="nav-backdrop" onclick="closeNav()"></div>
 
-<div id="market-timer" style="text-align:center;padding:12px 20px;background:var(--surface);border-bottom:1px solid var(--border);font-weight:800;letter-spacing:.5px">
-  <span id="timer-status" style="font-size:14px">—</span>
-  <span id="timer-countdown" style="font-size:26px;margin-left:10px;font-variant-numeric:tabular-nums">--:--:--</span>
+<div id="market-timer" style="text-align:center;padding:11px 20px;background:linear-gradient(180deg,rgba(99,102,241,.08),transparent);border-bottom:1px solid var(--border);font-weight:800;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;gap:10px">
+  <span id="timer-status" style="font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px">—</span>
+  <span id="timer-countdown" style="font-size:26px;font-variant-numeric:tabular-nums;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent">--:--:--</span>
 </div>
 
 <div class="layout">
@@ -2923,7 +2938,13 @@ DASHBOARD_HTML = """
     <!-- Leaderboard -->
     <div class="card">
       <div class="card-title">🏆 Leaderboard</div>
-      <div id="leaderboard">Loading...</div>
+      <div id="leaderboard">
+        <div class="lb-skel" style="height:38px;margin:6px 0;border-radius:8px"></div>
+        <div class="lb-skel" style="height:38px;margin:6px 0;border-radius:8px"></div>
+        <div class="lb-skel" style="height:38px;margin:6px 0;border-radius:8px"></div>
+        <div class="lb-skel" style="height:38px;margin:6px 0;border-radius:8px"></div>
+        <div class="lb-skel" style="height:38px;margin:6px 0;border-radius:8px"></div>
+      </div>
       <div class="updated" id="lb-updated">—</div>
     </div>
 
@@ -4038,7 +4059,7 @@ async function loadDrawerCompanies() {
   }
   el.innerHTML = drawerCompanies.map(c => {
     const t = COMPANY_TYPES_MAP[c.type] || {name:c.type, emoji:'🏢'};
-    return `<div onclick="openDrawerCompany('${c.id}')" style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px;cursor:pointer;transition:border-color .2s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+    return `<div onclick="openDrawerCompany('${c.id}')" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:14px;margin-bottom:10px;cursor:pointer;transition:border-color .18s,transform .18s,box-shadow .18s" onmouseover="this.style.borderColor='var(--accent)';this.style.transform='translateY(-2px)';this.style.boxShadow='var(--sh)'" onmouseout="this.style.borderColor='var(--border)';this.style.transform='';this.style.boxShadow=''">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <span style="font-size:22px">${t.emoji}</span>
         <div style="flex:1">

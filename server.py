@@ -16,6 +16,7 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
     {"date": "Jun 6", "items": [
+        "🪄 More polish — glowing dot on the latest price, gold avg-buy line, app icon, safe-area support for notched phones, and the Guide/Companies pages now match the new look.",
         "✨ Fresh modern look — new font, deeper colors, softer cards, and the price now flashes green/red when it moves.",
         "📱 The site is now mobile-friendly — the top buttons collapse into a ☰ menu and tap targets are bigger.",
         "🔴 While the market is closed (12am–12pm CST) the SUS price is frozen, no news happens, and you can't buy/sell/short. Companies, the lottery, the store, and server unlocks still work.",
@@ -2595,6 +2596,7 @@ DASHBOARD_HTML = """
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
 <title>Sus Stock Market</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
@@ -2624,6 +2626,14 @@ DASHBOARD_HTML = """
       radial-gradient(900px 500px at -10% 10%, rgba(139,92,246,.08), transparent 55%),
       var(--bg);
     background-attachment: fixed;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
+  }
+  button, a, .btn, .zoom-btn, .nav-buttons > * { touch-action: manipulation; }
+  @supports(padding: env(safe-area-inset-top)) {
+    header { padding-top: calc(14px + env(safe-area-inset-top)); padding-left: max(28px, env(safe-area-inset-left)); padding-right: max(28px, env(safe-area-inset-right)); }
+    body { padding-bottom: env(safe-area-inset-bottom); }
+    @media(max-width:800px){ [id$="-modal"] > div { padding-bottom: calc(18px + env(safe-area-inset-bottom)) !important; } }
   }
   /* numbers never jitter as they update */
   .price, .stat-value, .p-stat-value, .lb-worth, .lb-pnl, #timer-countdown, .change-badge { font-variant-numeric: tabular-nums; }
@@ -3894,7 +3904,7 @@ let myAvgCost = 0;
 function costLineDataset(len) {
   if (!myAvgCost || myAvgCost <= 0) return null;
   return { type: 'line', label: 'Your avg buy', data: new Array(len).fill(myAvgCost),
-    borderColor: '#fee75c', borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false };
+    borderColor: '#fbbf24', borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0, fill: false };
 }
 
 function setZoom(points, label) {
@@ -3939,9 +3949,13 @@ function renderChart() {
     grad.addColorStop(0, `rgba(${rgb},0.32)`);
     grad.addColorStop(0.7, `rgba(${rgb},0.05)`);
     grad.addColorStop(1, `rgba(${rgb},0)`);
-    chart.data.datasets = [{ data: h, borderColor: up ? '#34d399' : '#f87171',
-      backgroundColor: grad, borderWidth: 2.5, pointRadius: 0, fill: true, tension: 0.35,
-      pointHoverRadius: 5, pointHoverBackgroundColor: '#fff', pointHoverBorderColor: up ? '#34d399' : '#f87171', pointHoverBorderWidth: 2 }];
+    const lastIdx = h.length - 1;
+    const dotColor = up ? '#34d399' : '#f87171';
+    chart.data.datasets = [{ data: h, borderColor: dotColor,
+      backgroundColor: grad, borderWidth: 2.5, fill: true, tension: 0.35,
+      pointRadius: h.map((_, i) => i === lastIdx ? 4 : 0),
+      pointBackgroundColor: dotColor, pointBorderColor: '#fff', pointBorderWidth: 1.5,
+      pointHoverRadius: 5, pointHoverBackgroundColor: '#fff', pointHoverBorderColor: dotColor, pointHoverBorderWidth: 2 }];
     const cl = costLineDataset(chart.data.labels.length);
     if (cl) chart.data.datasets.push(cl);
     chart.update();
@@ -4639,30 +4653,33 @@ COMPANIES_HTML = """
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>Sus Stock — Companies</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
   :root { --bg:#0e0f13;--surface:#1a1c22;--surface2:#22252c;--accent:#6366f1;--accent2:#8b5cf6;--accent-grad:linear-gradient(135deg,#6366f1,#8b5cf6);--green:#34d399;--red:#f87171;--text:#e8eaed;--muted:#8b93a1;--border:#2a2e37; }
   *{box-sizing:border-box;margin:0;padding:0}
   body{color:var(--text);min-height:100vh;font-family:'Inter','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1200px 600px at 80% -10%,rgba(99,102,241,.10),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(139,92,246,.08),transparent 55%),var(--bg);background-attachment:fixed}
-  header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:16px}
-  header h1{font-size:20px;font-weight:700}
+  header{background:rgba(20,22,28,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:90;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  header h1{font-size:20px;font-weight:800;letter-spacing:-.3px;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
   .nav-link{color:var(--muted);text-decoration:none;font-size:13px;font-weight:600}
   .nav-link:hover{color:var(--text)}
   .auth-area{margin-left:auto;display:flex;align-items:center;gap:10px}
-  .btn{padding:7px 16px;border-radius:8px;font-size:13px;font-weight:600;border:none;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px}
-  .btn-primary{background:var(--accent);color:#fff}
-  .btn-primary:hover{background:#4752c4}
-  .btn-green{background:#57f28722;color:var(--green);border:1px solid #57f28740}
-  .btn-red{background:#ed424522;color:var(--red);border:1px solid #ed424540}
+  .btn{padding:8px 16px;border-radius:10px;font-size:13px;font-weight:600;border:none;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;transition:transform .12s ease,filter .15s ease}
+  .btn:hover{transform:translateY(-1px)}
+  .btn:active{transform:scale(.97)}
+  .btn-primary{background:var(--accent-grad);color:#fff;box-shadow:0 4px 14px rgba(99,102,241,.35)}
+  .btn-primary:hover{filter:brightness(1.08)}
+  .btn-green{background:rgba(52,211,153,.14);color:var(--green);border:1px solid rgba(52,211,153,.32)}
+  .btn-red{background:rgba(248,113,113,.14);color:var(--red);border:1px solid rgba(248,113,113,.32)}
   .btn-muted{background:var(--surface2);color:var(--muted)}
   .avatar{width:30px;height:30px;border-radius:50%}
   .container{max-width:1200px;margin:0 auto;padding:24px 28px}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px 24px;margin-bottom:16px}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0)),var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px 24px;margin-bottom:16px;box-shadow:0 4px 16px rgba(0,0,0,.35)}
   .card-title{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
-  .company-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px;cursor:pointer;transition:border-color .2s}
-  .company-card:hover{border-color:var(--accent)}
+  .company-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px;cursor:pointer;transition:border-color .18s,transform .18s,box-shadow .18s;box-shadow:0 4px 16px rgba(0,0,0,.35)}
+  .company-card:hover{border-color:var(--accent);transform:translateY(-3px);box-shadow:0 12px 40px rgba(0,0,0,.45)}
   .company-header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
   .company-emoji{font-size:28px}
   .company-name{font-size:16px;font-weight:700}
@@ -5074,25 +5091,26 @@ GUIDE_HTML = """
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>Sus Stock — Company Guide</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
 <style>
   :root{--bg:#0e0f13;--surface:#1a1c22;--surface2:#22252c;--accent:#6366f1;--accent2:#8b5cf6;--accent-grad:linear-gradient(135deg,#6366f1,#8b5cf6);--green:#34d399;--red:#f87171;--text:#e8eaed;--muted:#8b93a1;--border:#2a2e37;}
   *{box-sizing:border-box;margin:0;padding:0}
   body{color:var(--text);line-height:1.6;font-family:'Inter','Segoe UI',system-ui,sans-serif;-webkit-font-smoothing:antialiased;background:radial-gradient(1200px 600px at 80% -10%,rgba(99,102,241,.10),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(139,92,246,.08),transparent 55%),var(--bg);background-attachment:fixed}
-  header{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10}
-  header h1{font-size:20px;font-weight:700}
+  header{background:rgba(20,22,28,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border);padding:14px 28px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  header h1{font-size:20px;font-weight:800;letter-spacing:-.3px;background:var(--accent-grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
   a.nav{color:var(--accent);text-decoration:none;font-size:13px;font-weight:700}
   .wrap{max-width:860px;margin:0 auto;padding:28px 24px 80px}
   h2{font-size:22px;margin:28px 0 8px;border-bottom:1px solid var(--border);padding-bottom:8px}
   h3{font-size:17px;margin:20px 0 4px;display:flex;align-items:center;gap:8px}
   p{color:var(--text);margin:6px 0;font-size:14px}
   .muted{color:var(--muted);font-size:13px}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;margin:14px 0}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0)),var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px 20px;margin:14px 0;box-shadow:0 4px 16px rgba(0,0,0,.3)}
   .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;margin-right:6px}
-  .tag.passive{background:#57f28722;color:var(--green)}
-  .tag.active{background:#5865f222;color:var(--accent)}
-  .tag.risk{background:#ed424522;color:var(--red)}
+  .tag.passive{background:rgba(52,211,153,.16);color:var(--green)}
+  .tag.active{background:rgba(99,102,241,.18);color:var(--accent)}
+  .tag.risk{background:rgba(248,113,113,.16);color:var(--red)}
   ul{margin:6px 0 6px 22px}
   li{font-size:14px;margin:3px 0}
   code{background:var(--surface2);padding:1px 6px;border-radius:5px;font-size:13px}

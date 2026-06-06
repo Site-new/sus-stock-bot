@@ -3544,18 +3544,7 @@ async function fetchStock() {
   }
   // Big closed banner + chart watermark + countdown to open
   // Gray out & disable the SUS trade controls while the market is closed
-  if (d.market_open !== undefined) {
-    document.querySelectorAll('.btn-buy, .btn-sell, .trade-input').forEach(b => {
-      const oc = b.getAttribute('onclick') || '';
-      const isTradeCtl = b.classList.contains('trade-input') || /trade\\(|openShort\\(|coverShort\\(|placeLimit\\(/.test(oc);
-      if (isTradeCtl) {
-        b.disabled = !d.market_open;
-        b.style.opacity = d.market_open ? '' : '0.45';
-        b.style.cursor = d.market_open ? '' : 'not-allowed';
-        b.title = d.market_open ? '' : 'Market closed (opens 8am Houston time)';
-      }
-    });
-  }
+  if (d.market_open !== undefined) { window.marketOpen = d.market_open; applyMarketLock(); }
   // News ticker (top bar) + full news feed
   const nowSec = Math.floor(Date.now() / 1000);
   // Insider badge on the news panel title
@@ -3763,7 +3752,28 @@ async function fetchMe() {
   if (focusedId) { const fe = document.getElementById(focusedId); if (fe) fe.focus(); }
   // Restore the previously active tab after re-render
   setTab(activeTab);
+  applyMarketLock();  // re-disable trade controls if the market is closed
   if (u.verified) loadRecipients();
+}
+
+// Disable/gray the SUS trade controls while the market is closed.
+// Re-applied after every render so a refresh can't silently re-enable them.
+function applyMarketLock() {
+  const open = window.marketOpen !== false; // treat unknown as open
+  const fns = ['trade(', 'openShort(', 'coverShort(', 'placeLimit(', 'setMaxShares('];
+  document.querySelectorAll('#portfolio-area button').forEach(b => {
+    const oc = b.getAttribute('onclick') || '';
+    if (fns.some(f => oc.includes(f))) {
+      b.disabled = !open;
+      b.style.opacity = open ? '' : '0.45';
+      b.style.cursor = open ? '' : 'not-allowed';
+      b.title = open ? '' : 'Market closed (opens 8am Houston time)';
+    }
+  });
+  ['trade-amount','sell-amount','short-amount','lshares','lprice'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.disabled = !open; el.style.opacity = open ? '' : '0.45'; }
+  });
 }
 
 let activeTab = 'buy';

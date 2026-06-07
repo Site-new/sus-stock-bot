@@ -1181,6 +1181,14 @@ def api_company(cid):
     investors.sort(key=lambda x: x["shares"], reverse=True)
     c["_investors"] = investors
 
+    # Savings depositors with names (for the CEO to see who put money in)
+    depositors = []
+    for d_uid, amt in c.get("deposits", {}).items():
+        if amt and amt > 0:
+            depositors.append({"name": get_discord_username(d_uid) or f"User #{d_uid[-4:]}", "amount": round(amt, 2)})
+    depositors.sort(key=lambda x: x["amount"], reverse=True)
+    c["_depositors"] = depositors
+
     # Subscribers (insider ring) with next due times
     subs = []
     for s_uid, s in c.get("subscribers", {}).items():
@@ -4330,6 +4338,8 @@ function buildDrawerTypePanel(c, isMember, isCeo) {
         <div style="display:flex;justify-content:space-between;font-size:12px"><span>Bank value</span><b>${fmt(c._value||0)}</b></div>
         <div style="display:flex;justify-content:space-between;font-size:12px"><span>Owed to depositors</span><b style="color:var(--red)">${fmt(owed)}</b></div>
         <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:700;margin-top:2px"><span>Your profit</span><span style="color:${profit>=0?'var(--green)':'var(--red)'}">${profit>=0?'+':''}${fmt(profit)}</span></div>
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin:10px 0 4px">👥 Depositors (${(c._depositors||[]).length})</div>
+        ${(c._depositors && c._depositors.length) ? c._depositors.map(d => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-top:1px solid var(--border)"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.name}</span><b style="color:var(--green);flex-shrink:0;margin-left:8px">${fmt(d.amount)}</b></div>`).join('') : '<div style="font-size:12px;color:var(--muted)">No deposits yet.</div>'}
       </div>` : ''}
     </div>`;
     }

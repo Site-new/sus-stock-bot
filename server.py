@@ -15,6 +15,9 @@ TRADE_FEE = 0.01  # 1% fee on SUS buys and sells (slows progression, drains mone
 
 # Newest entries first. Keep these short and player-friendly.
 CHANGELOG = [
+    {"date": "Jun 8", "items": [
+        "🧹 Removed the credit-score system — send money has no tier limits anymore, and there are no credit badges.",
+    ]},
     {"date": "Jun 6", "items": [
         "✂️ Stock splits removed — the price no longer halves at $400, and share counts stay normal.",
         "🕗 Market hours are now 8am–midnight Houston time. While closed, the trade buttons simply gray out (the big CLOSED banner is gone).",
@@ -106,39 +109,6 @@ def get_user(data, user_id):
     if uid not in data["users"]:
         data["users"][uid] = {"balance": STARTING_BALANCE, "shares": 0}
     return data["users"][uid]
-
-
-# ── Credit score ────────────────────────────────────────────────────────────────
-
-def get_credit(u):
-    return u.get("credit", 500)
-
-def adjust_credit(u, delta):
-    u["credit"] = max(300, min(850, get_credit(u) + delta))
-    return u["credit"]
-
-def credit_tier(score):
-    if score >= 800:
-        return {"name": "Exceptional", "emoji": "💎", "color": "#7ad7ff"}
-    if score >= 740:
-        return {"name": "Very Good", "emoji": "🟢", "color": "#57f287"}
-    if score >= 670:
-        return {"name": "Good", "emoji": "🥇", "color": "#ffd700"}
-    if score >= 580:
-        return {"name": "Fair", "emoji": "🟡", "color": "#fee75c"}
-    return {"name": "Poor", "emoji": "🔴", "color": "#ed4245"}
-
-def send_limit(score):
-    """Max single transfer by credit tier. None = unlimited."""
-    if score >= 800:
-        return None
-    if score >= 740:
-        return 100000
-    if score >= 670:
-        return 25000
-    if score >= 580:
-        return 5000
-    return 1000
 
 
 def is_banned(u):
@@ -290,7 +260,7 @@ def admin_reset_market():
     data = load_data()
     for uid, u in list(data.get("users", {}).items()):
         data["users"][uid] = {
-            "balance": STARTING_BALANCE, "shares": 0, "credit": 500,
+            "balance": STARTING_BALANCE, "shares": 0,
             "verified": u.get("verified", False), "banned_until": u.get("banned_until", 0),
         }
     data["stock_price"] = 50.0
@@ -515,8 +485,7 @@ def api_leaderboard():
         rows.append({"id": uid, "username": username, "shares": u["shares"], "cash": u["balance"],
                      "invested": invested, "net_worth": net_worth,
                      "pnl": round(net_worth - STARTING_BALANCE, 2), "is_company": False,
-                     "verified": u.get("verified", False),
-                     "credit_emoji": credit_tier(get_credit(u))["emoji"]})
+                     "verified": u.get("verified", False)})
     # Include companies, ranked by total value, showing their CEO
     try:
         from companies import load_companies as _lc, company_value as _cv
@@ -614,9 +583,6 @@ def api_me():
         "is_admin": is_admin(),
         "acting_as": None,
         "my_companies": my_companies,
-        "credit": get_credit(u),
-        "credit_tier": credit_tier(get_credit(u)),
-        "send_limit": send_limit(get_credit(u)),
         "mc_linked": next((l.get("username") for l in data.get("mc_links", {}).values()
                            if l.get("discord_id") == uid), None),
         "avg_cost": u.get("avg_cost", 0),
@@ -919,10 +885,6 @@ def api_send_money():
     amount = float(request.json.get("amount", 0))
     if amount <= 0:
         return jsonify({"error": "invalid amount"}), 400
-    lim = send_limit(get_credit(sender))
-    if lim is not None and amount > lim:
-        tier = credit_tier(get_credit(sender))
-        return jsonify({"error": f"Your {tier['name']} credit limits sends to {fmt(lim)}. Repay loans to raise it."}), 400
     if recipient_id == session["user_id"]:
         return jsonify({"error": "can't send to yourself"}), 400
     if recipient_id not in data["users"]:
@@ -1775,8 +1737,7 @@ def api_company_repay(cid):
     u["balance"] = round(u["balance"] - loan["due"], 2)
     c["treasury"] = round(c["treasury"] + loan["due"], 2)
     del c["loans"][uid]
-    new_credit = adjust_credit(u, 25)  # reward on-time repayment
-    add_notification(data, uid, f"✅ Loan repaid — credit +25 (now {new_credit})", True)
+    add_notification(data, uid, "✅ Loan repaid in full.", True)
     save_data(data)
     save_companies(companies)
     return jsonify({"ok": True})
@@ -2373,8 +2334,6 @@ def mc_status():
     nw = round(u["balance"] + u.get("shares", 0) * price, 2)
     return jsonify({
         "verified": u.get("verified", False),
-        "credit": get_credit(u),
-        "tier": credit_tier(get_credit(u))["name"],
         "net_worth": nw,
         "discord_name": get_discord_username(uid),
     })
@@ -3688,14 +3647,6 @@ async function fetchMe() {
       ${(u.acting_as ? ['Buy','Sell','Short'] : (u.verified ? ['Buy','Sell','Short','Limits','Send'] : ['Buy','Sell','Short','Limits'])).map(t => `<button onclick="setTab('${t.toLowerCase()}')" id="tab-${t.toLowerCase()}" class="seg-btn ${t==='Buy'?'active':''}">${t}</button>`).join('')}
     </div>
     ${u.verified ? '<div style="font-size:10px;color:var(--green);font-weight:700;margin-bottom:8px">✓ VERIFIED ACCOUNT</div>' : ''}
-    ${(!u.acting_as && u.credit_tier) ? `<div style="display:flex;align-items:center;gap:8px;background:var(--surface2);border-radius:8px;padding:8px 12px;margin-bottom:10px">
-      <span style="font-size:18px">${u.credit_tier.emoji}</span>
-      <div style="flex:1">
-        <div style="font-size:12px;font-weight:700">Credit: ${u.credit} <span style="color:${u.credit_tier.color}">${u.credit_tier.name}</span></div>
-        <div style="font-size:10px;color:var(--muted)">Send limit: ${u.send_limit === null ? 'Unlimited' : fmt(u.send_limit)} · repay loans to raise it</div>
-      </div>
-    </div>` : ''}
-
     <div id="tab-buy-content">
       <div style="display:flex;gap:6px">
         <input type="number" id="trade-amount" class="trade-input" placeholder="Shares to buy..." min="1" style="flex:1;margin-bottom:0"/>
@@ -3912,7 +3863,7 @@ async function fetchLeaderboard() {
       name = `🏢 ${u.username}`;
       sub = `CEO: ${u.ceo || 'Unknown'} · ${u.shares} SUS`;
     } else {
-      name = (u.id === myUserId ? '⭐ ' + (u.username || 'You') : (u.username || 'Trader #'+u.id.slice(-4))) + (u.verified ? ' <span style="color:#57f287">✓</span>' : '') + (u.credit_emoji ? ' ' + u.credit_emoji : '');
+      name = (u.id === myUserId ? '⭐ ' + (u.username || 'You') : (u.username || 'Trader #'+u.id.slice(-4))) + (u.verified ? ' <span style="color:#57f287">✓</span>' : '');
       sub = `${u.pnl>=0?'+':''}${fmt(u.pnl)} · ${u.shares} shares`;
     }
     return `<div class="lb-row ${u.id === myUserId ? 'lb-me' : ''}">
@@ -5179,22 +5130,6 @@ GUIDE_HTML = """
   <p><b>Investing:</b> Buy a company's stock; if its value grows (smart CEO trades, passive earnings, etc.), your shares are worth more and you sell for profit.</p>
   <p><b>Trading as a company:</b> A CEO can switch the main trading menu to act on the company's behalf — buying, selling, and shorting SUS straight from the treasury.</p>
   <p><b>Tags below:</b> <span class="tag passive">Passive</span> earns automatically · <span class="tag active">Active</span> needs you to act · <span class="tag risk">Risky</span> can lose money.</p>
-</div>
-
-<h2>Credit score &amp; trust</h2>
-<div class="card">
-  <p>Every account has a <b>credit score</b> from 300–850, starting at <b>500</b>. It controls how much money you're trusted to send.</p>
-  <p><b>Score goes up:</b> repaying a loan in full <code>+25</code>.</p>
-  <p><b>Score goes down:</b> defaulting on loan interest (can't afford a payment) <code>−20</code>.</p>
-  <p><b>Send limits by tier (real FICO ranges):</b></p>
-  <ul>
-    <li>🔴 <b>Poor</b> (300–579): send up to <b>$1,000</b> at a time</li>
-    <li>🟡 <b>Fair</b> (580–669): up to <b>$5,000</b></li>
-    <li>🥇 <b>Good</b> (670–739): up to <b>$25,000</b></li>
-    <li>🟢 <b>Very Good</b> (740–799): up to <b>$100,000</b></li>
-    <li>💎 <b>Exceptional</b> (800–850): <b>unlimited</b></li>
-  </ul>
-  <p class="muted">Your tier badge shows on the leaderboard and in your portfolio. Borrow and repay loans from a Lending Bank to build trust.</p>
 </div>
 
 <div class="toc">

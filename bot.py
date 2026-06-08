@@ -851,9 +851,8 @@ async def process_companies():
                             u["balance"] = round(u["balance"] - interest, 2)
                             c["treasury"] = round(c["treasury"] + interest, 2)
                         else:
-                            # Can't pay — debt grows and credit drops
+                            # Can't pay — debt grows (compounds 10%)
                             c["loans"][uid]["due"] = round(loan["due"] * 1.1, 2)
-                            u["credit"] = max(300, min(850, u.get("credit", 500) - 20))
                     changed = True
 
             # ── Insurance: check policies and pay out if needed ───────────────
